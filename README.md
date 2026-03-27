@@ -30,6 +30,13 @@
 - 把整篇长文一次性整体重写
 - 为了“过检测”而随意改动事实或专业内容
 
+## 效果
+<img width="1910" height="915" alt="image" src="https://github.com/user-attachments/assets/356ec75b-52eb-4054-a5cd-25e986fc0245" />
+
+<img width="1910" height="915" alt="image" src="https://github.com/user-attachments/assets/c36e4a48-4192-4d78-ad3c-6c0787be1fa1" />
+
+
+
 ## 目录结构
 
 ```text
