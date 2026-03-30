@@ -33,7 +33,10 @@ export type DocumentStatus = {
   sourcePath: string;
   sourceKind: string;
   completedRounds: number[];
-  nextRound: number;
+  nextRound: number | null;
+  maxRounds: number;
+  hasNextRound: boolean;
+  isComplete: boolean;
   currentInputPath: string;
   currentOutputPath: string;
   manifestPath: string;

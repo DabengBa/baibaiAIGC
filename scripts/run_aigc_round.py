@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from chunking import DEFAULT_CHUNK_LIMIT
-from aigc_round_service import build_prompt_input, load_prompt, run_round
+from aigc_round_service import MAX_ROUNDS, build_prompt_input, load_prompt, run_round
 from llm_client import chat_completion, read_api_config
 
 
@@ -31,7 +31,7 @@ def _build_api_transform(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run one segmented AIGC round")
     parser.add_argument("doc_id", help="Document id, usually origin-relative path")
-    parser.add_argument("round", type=int, choices=[1, 2, 3], help="Round number")
+    parser.add_argument("round", type=int, choices=list(range(1, MAX_ROUNDS + 1)), help="Round number")
     parser.add_argument("input_path", type=Path, help="Input text file path")
     parser.add_argument("output_path", type=Path, help="Output text file path")
     parser.add_argument("manifest_path", type=Path, help="Manifest json output path")

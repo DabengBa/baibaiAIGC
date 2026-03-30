@@ -25,7 +25,7 @@ or workflows can rely on it:
 - The top-level keys are logical document identifiers, typically the
   relative path of the source file under `origin/`.
 - Each document entry stores the original path and an ordered list of
-  completed rounds (1, 2, 3).
+    completed rounds (1, 2).
 - Each round records which prompt was used, which file was the input,
   which file is the output, an optional checklist total score, and a
   timestamp in ISO 8601 format.

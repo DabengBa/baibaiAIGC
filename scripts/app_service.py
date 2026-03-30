@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from aigc_records import delete_document, delete_rounds, list_records, normalize_doc_id
-from aigc_round_service import normalize_path
+from aigc_round_service import MAX_ROUNDS, normalize_path
 from docx_pipeline import _split_text_into_blocks, write_docx_text
 from llm_client import chat_completion, test_chat_connection
-from skill_round_helper import build_round_context
+from skill_round_helper import build_round_context, ensure_skill_input_text, get_document_round_state
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -64,51 +64,94 @@ def emit_error_payload(message: str) -> None:
 
 
 def import_document(source_path: str) -> dict[str, Any]:
-    context = build_round_context(source_path)
+    normalized_source = normalize_path(Path(source_path))
+    try:
+        relative_doc_id = normalized_source.relative_to(ROOT_DIR)
+        doc_id = normalize_doc_id(str(relative_doc_id).replace("\\", "/"))
+    except ValueError:
+        doc_id = normalize_doc_id(str(normalized_source))
+
+    round_state = get_document_round_state(doc_id)
+    input_text_path, extracted_from_docx = ensure_skill_input_text(normalized_source)
+    output_text_path = ""
+    manifest_path = ""
+
+    if round_state.next_round is not None:
+        context = build_round_context(normalized_source, round_number=round_state.next_round)
+        output_text_path = str(context.output_text_path)
+        manifest_path = str(context.manifest_path)
+
     return {
-        "docId": context.doc_id,
-        "sourcePath": str(context.source_path),
-        "sourceKind": context.source_kind,
-        "inputTextPath": str(context.input_text_path),
-        "outputTextPath": str(context.output_text_path),
-        "manifestPath": str(context.manifest_path),
-        "nextRound": context.round_number,
-        "extractedFromDocx": context.extracted_from_docx,
+        "docId": doc_id,
+        "sourcePath": str(normalized_source),
+        "sourceKind": normalized_source.suffix.lower() or ".txt",
+        "completedRounds": round_state.completed_rounds,
+        "nextRound": round_state.next_round,
+        "maxRounds": MAX_ROUNDS,
+        "hasNextRound": round_state.next_round is not None,
+        "isComplete": round_state.is_complete,
+        "inputTextPath": str(input_text_path),
+        "outputTextPath": output_text_path,
+        "manifestPath": manifest_path,
+        "extractedFromDocx": extracted_from_docx,
     }
 
 
 def get_document_status(source_path: str) -> dict[str, Any]:
     normalized_source = normalize_path(Path(source_path))
-    context = build_round_context(normalized_source)
+    try:
+        relative_doc_id = normalized_source.relative_to(ROOT_DIR)
+        doc_id = normalize_doc_id(str(relative_doc_id).replace("\\", "/"))
+    except ValueError:
+        doc_id = normalize_doc_id(str(normalized_source))
+
+    round_state = get_document_round_state(doc_id)
     records = list_records()
-    entry = records.get(context.doc_id, {}) if isinstance(records, dict) else {}
+    entry = records.get(doc_id, {}) if isinstance(records, dict) else {}
     rounds = entry.get("rounds", []) if isinstance(entry, dict) else []
     completed_rounds = [item.get("round") for item in rounds if isinstance(item, dict) and isinstance(item.get("round"), int)]
     completed_rounds.sort()
     latest_output_path = ""
+    current_input_path, extracted_from_docx = ensure_skill_input_text(normalized_source)
+    current_output_path = ""
+    manifest_path = ""
+
+    if round_state.next_round is not None:
+        context = build_round_context(normalized_source, round_number=round_state.next_round)
+        current_input_path = context.input_text_path
+        current_output_path = str(context.output_text_path)
+        manifest_path = str(context.manifest_path)
+
     if rounds:
         latest_round = max((item for item in rounds if isinstance(item, dict) and isinstance(item.get("round"), int)), key=lambda item: item["round"], default=None)
         if latest_round:
             latest_output_path = str(normalize_path(Path(str(latest_round.get("output_path", ""))))) if latest_round.get("output_path") else ""
     return {
-        "docId": context.doc_id,
+        "docId": doc_id,
         "sourcePath": str(normalized_source),
-        "sourceKind": context.source_kind,
+        "sourceKind": normalized_source.suffix.lower() or ".txt",
         "completedRounds": completed_rounds,
-        "nextRound": context.round_number,
-        "currentInputPath": str(context.input_text_path),
-        "currentOutputPath": str(context.output_text_path),
-        "manifestPath": str(context.manifest_path),
+        "nextRound": round_state.next_round,
+        "maxRounds": MAX_ROUNDS,
+        "hasNextRound": round_state.next_round is not None,
+        "isComplete": round_state.is_complete,
+        "currentInputPath": str(current_input_path),
+        "currentOutputPath": current_output_path,
+        "manifestPath": manifest_path,
         "latestOutputPath": latest_output_path,
-        "extractedFromDocx": context.extracted_from_docx,
+        "extractedFromDocx": extracted_from_docx,
     }
 
 
 def get_document_history(source_path: str) -> dict[str, Any]:
     normalized_source = normalize_path(Path(source_path))
-    context = build_round_context(normalized_source)
+    try:
+        relative_doc_id = normalized_source.relative_to(ROOT_DIR)
+        doc_id = normalize_doc_id(str(relative_doc_id).replace("\\", "/"))
+    except ValueError:
+        doc_id = normalize_doc_id(str(normalized_source))
     records = list_records()
-    entry = records.get(context.doc_id, {}) if isinstance(records, dict) else {}
+    entry = records.get(doc_id, {}) if isinstance(records, dict) else {}
     rounds = entry.get("rounds", []) if isinstance(entry, dict) else []
 
     history_rounds = [_map_history_round(item) for item in rounds if isinstance(item, dict)]
@@ -116,7 +159,7 @@ def get_document_history(source_path: str) -> dict[str, Any]:
     history_rounds.sort(key=lambda item: item["round"], reverse=True)
 
     return {
-        "docId": context.doc_id,
+        "docId": doc_id,
         "sourcePath": str(normalized_source),
         "rounds": history_rounds,
     }
@@ -167,6 +210,10 @@ def run_round_for_app(source_path: str, model_config: dict[str, Any], round_numb
                 base_url=base_url,
                 temperature=temperature,
             )
+
+    status = get_document_status(source_path)
+    if bool(status.get("isComplete")):
+        raise ValueError(f"Document already completed all {MAX_ROUNDS} rounds.")
 
     result = run_skill_round(
         source_path,

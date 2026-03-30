@@ -31,6 +31,13 @@ function formatRuntimeStep(progress: RoundProgress | null, fallback: string): st
   return fallback;
 }
 
+function describeDocumentProgress(nextRound: number | null, hasNextRound: boolean): string {
+  if (hasNextRound && nextRound) {
+    return `当前可执行第 ${nextRound} 轮。`;
+  }
+  return "当前文档已完成全部轮次。";
+}
+
 export function App({ service, pickerLabel }: Props) {
   const progressUnlistenRef = useRef<null | (() => void)>(null);
   const {
@@ -104,8 +111,8 @@ export function App({ service, pickerLabel }: Props) {
       const status = await refreshDocumentState(item.sourcePath);
       setRoundResult(null);
       setPreviewText("");
-      setNotice(`已切换到历史文档，当前可执行第 ${status.nextRound} 轮。`);
-      setRuntimeStep(`已载入历史文档，当前到第 ${status.nextRound} 轮`);
+      setNotice(`已切换到历史文档，${describeDocumentProgress(status.nextRound, status.hasNextRound)}`);
+      setRuntimeStep(status.hasNextRound && status.nextRound ? `已载入历史文档，当前到第 ${status.nextRound} 轮` : "已载入历史文档，全部轮次已完成");
     } catch (appError) {
       setError(String(appError));
       setRuntimeStep("载入历史文档失败");
@@ -201,8 +208,8 @@ export function App({ service, pickerLabel }: Props) {
       setHistoryPanelOpen(true);
       setRoundResult(null);
       setPreviewText("");
-      setRuntimeStep(`已载入文档，当前到第 ${status.nextRound} 轮`);
-      setNotice(`已导入文档，当前可执行第 ${status.nextRound} 轮。`);
+      setRuntimeStep(status.hasNextRound && status.nextRound ? `已载入文档，当前到第 ${status.nextRound} 轮` : "已载入文档，全部轮次已完成");
+      setNotice(`已导入文档，${describeDocumentProgress(status.nextRound, status.hasNextRound)}`);
     } catch (appError) {
       setError(String(appError));
       setRuntimeStep("读取文档失败");
@@ -214,6 +221,10 @@ export function App({ service, pickerLabel }: Props) {
   async function handleRunRound() {
     if (!documentStatus) {
       setNotice("请先导入一个 txt 或 docx 文档。");
+      return;
+    }
+    if (!documentStatus.hasNextRound || documentStatus.isComplete || !documentStatus.nextRound) {
+      setNotice("当前文档已完成全部轮次，如需重跑请先从历史记录回滚。");
       return;
     }
     try {
@@ -240,8 +251,8 @@ export function App({ service, pickerLabel }: Props) {
       const status = await refreshDocumentState(documentStatus.sourcePath);
       await refreshHistoryList();
       setHistoryPanelOpen(true);
-      setRuntimeStep(`第 ${result.round} 轮完成，下一步可执行第 ${status.nextRound} 轮`);
-      setNotice(`第 ${result.round} 轮已完成，可以继续导出或进入下一轮。`);
+      setRuntimeStep(status.hasNextRound && status.nextRound ? `第 ${result.round} 轮完成，下一步可执行第 ${status.nextRound} 轮` : `第 ${result.round} 轮完成，全部轮次已结束`);
+      setNotice(status.hasNextRound ? `第 ${result.round} 轮已完成，可以继续导出或进入下一轮。` : `第 ${result.round} 轮已完成，当前文档的全部轮次已结束，可以直接导出。`);
     } catch (appError) {
       progressUnlistenRef.current?.();
       progressUnlistenRef.current = null;

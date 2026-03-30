@@ -18,6 +18,8 @@ function displayDocId(status: DocumentStatus): string {
 }
 
 export function DocumentCard({ value, busy, onPickFile, onRunRound, pickerLabel = "选择文档" }: Props) {
+  const canRunNextRound = Boolean(value?.hasNextRound) && !busy;
+
   return (
     <section className="glass-card section-stack">
       <div className="section-header">
@@ -46,15 +48,15 @@ export function DocumentCard({ value, busy, onPickFile, onRunRound, pickerLabel 
             </div>
             <div className="info-item">
               <span>下一轮</span>
-              <strong>第 {value.nextRound} 轮</strong>
+              <strong>{value.hasNextRound && value.nextRound ? `第 ${value.nextRound} 轮` : "已完成全部轮次"}</strong>
             </div>
           </div>
           <div className="path-box">
             <span>当前输入</span>
             <strong>{value.currentInputPath}</strong>
           </div>
-          <button className="primary-button" onClick={onRunRound} disabled={busy}>
-            执行下一轮
+          <button className="primary-button" onClick={onRunRound} disabled={!canRunNextRound}>
+            {value.hasNextRound ? "执行下一轮" : "已完成全部轮次"}
           </button>
         </>
       ) : (

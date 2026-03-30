@@ -7,10 +7,12 @@ from aigc_records import ROOT_DIR, update_round
 from chunking import DEFAULT_CHUNK_LIMIT, build_manifest, restore_text_from_chunks, save_manifest
 
 
+MAX_ROUNDS = 2
+
+
 PROMPTS = {
     1: "prompts/baibaiAIGC1.md",
     2: "prompts/baibaiAIGC2.md",
-    3: "prompts/baibaiAIGC3.md",
 }
 
 
@@ -74,6 +76,8 @@ def relative_to_root(path: Path) -> str:
 
 
 def load_prompt(round_number: int) -> str:
+    if round_number not in PROMPTS:
+        raise ValueError(f"Round {round_number} is not available. Supported rounds: 1-{MAX_ROUNDS}")
     prompt_path = ROOT_DIR / PROMPTS[round_number]
     return prompt_path.read_text(encoding="utf-8")
 

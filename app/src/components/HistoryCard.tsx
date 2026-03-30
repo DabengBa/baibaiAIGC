@@ -35,6 +35,17 @@ function formatDocName(item: HistoryDocumentSummary): string {
   return parts[parts.length - 1] || rawValue;
 }
 
+function formatNextRound(completedRounds: number[]): string {
+  const filtered = completedRounds.filter((round) => round >= 1 && round <= 2);
+  if (filtered.length >= 2) {
+    return "已完成";
+  }
+  if (!filtered.length) {
+    return "1";
+  }
+  return String(Math.max(...filtered) + 1);
+}
+
 export function HistoryCard({ currentDocId, currentHistory, items, open, busy, onToggle, onSelect, onDelete, onDownload }: Props) {
   return (
     <section className="glass-card section-stack history-card">
@@ -65,7 +76,7 @@ export function HistoryCard({ currentDocId, currentHistory, items, open, busy, o
                     </div>
                     <div className="history-metrics">
                       <span>当前文档 {isActive ? "已载入" : "未载入"}</span>
-                      <span>下一轮 {item.completedRounds.length ? Math.max(...item.completedRounds) + 1 : 1}</span>
+                      <span>下一轮 {formatNextRound(item.completedRounds)}</span>
                     </div>
                     <div className="path-box compact-box">
                       <span>文档路径</span>
