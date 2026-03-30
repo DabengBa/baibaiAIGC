@@ -4,19 +4,13 @@ import { HistoryCard } from "./components/HistoryCard";
 import { ModelConfigCard } from "./components/ModelConfigCard";
 import { ResultCard } from "./components/ResultCard";
 import { useAppState } from "./hooks/useAppState";
-import {
-  exportRound,
-  getDocumentHistory,
-  getDocumentStatus,
-  listenRoundProgress,
-  loadModelConfig,
-  pickInputFile,
-  readOutput,
-  runRound,
-  saveModelConfig,
-  testModelConnection,
-} from "./lib/tauri";
-import type { HistoryRound, RoundProgress } from "./types/app";
+import type { AppService } from "./lib/appService";
+import type { HistoryDocumentSummary, HistoryRound, RoundProgress } from "./types/app";
+
+type Props = {
+  service: AppService;
+  pickerLabel?: string;
+};
 
 function formatRuntimeStep(progress: RoundProgress | null, fallback: string): string {
   if (!progress) {
@@ -37,12 +31,14 @@ function formatRuntimeStep(progress: RoundProgress | null, fallback: string): st
   return fallback;
 }
 
-export function App() {
+export function App({ service, pickerLabel }: Props) {
   const progressUnlistenRef = useRef<null | (() => void)>(null);
   const {
     modelConfig,
     documentStatus,
     history,
+    historyItems,
+    historyPanelOpen,
     roundResult,
     progress,
     previewText,
@@ -53,6 +49,8 @@ export function App() {
     setModelConfig,
     setDocumentStatus,
     setHistory,
+    setHistoryItems,
+    setHistoryPanelOpen,
     setRoundResult,
     setProgress,
     setPreviewText,
@@ -63,10 +61,16 @@ export function App() {
   } = useAppState();
 
   useEffect(() => {
-    loadModelConfig()
+    service.loadModelConfig()
       .then((config) => setModelConfig(config))
       .catch((appError: unknown) => setError(String(appError)));
-  }, [setError, setModelConfig]);
+  }, [service, setError, setModelConfig]);
+
+  useEffect(() => {
+    service.listDocumentHistories()
+      .then((result) => setHistoryItems(result.items))
+      .catch((appError: unknown) => setError(String(appError)));
+  }, [service, setError, setHistoryItems]);
 
   useEffect(() => {
     return () => {
@@ -77,12 +81,72 @@ export function App() {
 
   async function refreshDocumentState(sourcePath: string) {
     const [status, nextHistory] = await Promise.all([
-      getDocumentStatus(sourcePath),
-      getDocumentHistory(sourcePath),
+      service.getDocumentStatus(sourcePath),
+      service.getDocumentHistory(sourcePath),
     ]);
     setDocumentStatus(status);
     setHistory(nextHistory);
     return status;
+  }
+
+  async function refreshHistoryList() {
+    const result = await service.listDocumentHistories();
+    setHistoryItems(result.items);
+    return result.items;
+  }
+
+  async function handleSelectHistory(item: HistoryDocumentSummary) {
+    try {
+      setBusy(true);
+      setError("");
+      setNotice("");
+      setRuntimeStep("正在载入历史文档");
+      const status = await refreshDocumentState(item.sourcePath);
+      setRoundResult(null);
+      setPreviewText("");
+      setNotice(`已切换到历史文档，当前可执行第 ${status.nextRound} 轮。`);
+      setRuntimeStep(`已载入历史文档，当前到第 ${status.nextRound} 轮`);
+    } catch (appError) {
+      setError(String(appError));
+      setRuntimeStep("载入历史文档失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeleteHistory(docId: string, fromRound?: number) {
+    const actionLabel = fromRound ? `删除第 ${fromRound} 轮及之后历史` : "删除整条历史";
+    try {
+      setBusy(true);
+      setError("");
+      setNotice("");
+      setRuntimeStep(`正在${actionLabel}`);
+      const result = await service.deleteDocumentHistory(docId, fromRound);
+      const items = await refreshHistoryList();
+      if (documentStatus?.docId === docId) {
+        if (result.removedDocument) {
+          setDocumentStatus(null);
+          setHistory(null);
+          setRoundResult(null);
+          setPreviewText("");
+        } else {
+          const matchedItem = items.find((item) => item.docId === docId);
+          if (matchedItem) {
+            await refreshDocumentState(matchedItem.sourcePath);
+            setRoundResult(null);
+            setPreviewText("");
+          }
+        }
+      }
+      const deletedText = result.deletedRounds.length ? `已删除轮次：${result.deletedRounds.join(", ")}` : "没有匹配到可删除的轮次";
+      setNotice(result.removedDocument ? `历史已删除。${deletedText}` : `历史已更新。${deletedText}`);
+      setRuntimeStep(result.removedDocument ? "历史删除完成" : "历史回滚完成");
+    } catch (appError) {
+      setError(String(appError));
+      setRuntimeStep(`${actionLabel}失败`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleSaveModelConfig() {
@@ -91,7 +155,7 @@ export function App() {
       setError("");
       setNotice("");
       setRuntimeStep("正在保存模型设置");
-      const saved = await saveModelConfig(modelConfig);
+      const saved = await service.saveModelConfig(modelConfig);
       setModelConfig(saved);
       setNotice("模型设置已保存到本地。");
       setRuntimeStep("模型设置已保存");
@@ -109,7 +173,7 @@ export function App() {
       setError("");
       setNotice("");
       setRuntimeStep(modelConfig.offlineMode ? "离线模式无需测试远程接口" : "正在测试接口连通性");
-      const result = await testModelConnection(modelConfig);
+      const result = await service.testModelConnection(modelConfig);
       setNotice(result.message + (result.endpoint ? ` 接口：${result.endpoint}` : ""));
       setRuntimeStep(result.offlineMode ? "离线模式已确认" : "接口连通性测试成功");
     } catch (appError) {
@@ -126,13 +190,15 @@ export function App() {
       setError("");
       setNotice("");
       setRuntimeStep("正在选择并读取文档");
-      const filePath = await pickInputFile();
-      if (!filePath) {
+      const picked = await service.pickInputFile();
+      if (!picked) {
         setNotice("已取消选择文档。");
         setRuntimeStep("待命");
         return;
       }
-      const status = await refreshDocumentState(filePath);
+      const status = await refreshDocumentState(picked.sourcePath);
+      await refreshHistoryList();
+      setHistoryPanelOpen(true);
       setRoundResult(null);
       setPreviewText("");
       setRuntimeStep(`已载入文档，当前到第 ${status.nextRound} 轮`);
@@ -156,21 +222,24 @@ export function App() {
       setNotice("");
       setProgress(null);
       progressUnlistenRef.current?.();
-      progressUnlistenRef.current = await listenRoundProgress((nextProgress) => {
+      const runToken = await service.startRunRound(documentStatus.sourcePath, modelConfig);
+      progressUnlistenRef.current = await service.listenRoundProgress((nextProgress) => {
         setProgress(nextProgress);
         setRuntimeStep(formatRuntimeStep(nextProgress, "处理中"));
-      });
+      }, runToken);
       setRuntimeStep(`准备执行第 ${documentStatus.nextRound} 轮`);
-      const result = await runRound(documentStatus.sourcePath, modelConfig);
+      const result = await service.awaitRunRound(documentStatus.sourcePath, modelConfig, runToken);
       progressUnlistenRef.current?.();
       progressUnlistenRef.current = null;
       setProgress(null);
       setRuntimeStep(`第 ${result.round} 轮处理中，正在读取预览`);
       setRoundResult(result);
-      const preview = await readOutput(result.outputPath);
+      const preview = await service.readOutput(result.outputPath);
       setPreviewText(preview.text);
       setRuntimeStep(`第 ${result.round} 轮已完成，正在刷新历史`);
       const status = await refreshDocumentState(documentStatus.sourcePath);
+      await refreshHistoryList();
+      setHistoryPanelOpen(true);
       setRuntimeStep(`第 ${result.round} 轮完成，下一步可执行第 ${status.nextRound} 轮`);
       setNotice(`第 ${result.round} 轮已完成，可以继续导出或进入下一轮。`);
     } catch (appError) {
@@ -194,7 +263,7 @@ export function App() {
       setError("");
       setNotice("");
       setRuntimeStep(`正在导出第 ${item.round} 轮 ${targetFormat.toUpperCase()}`);
-      const result = await exportRound(item.outputPath, targetFormat);
+      const result = await service.exportRound(item.outputPath, targetFormat);
       setNotice(`第 ${item.round} 轮已导出 ${result.format.toUpperCase()}：${result.path}`);
       setRuntimeStep(`第 ${item.round} 轮导出完成`);
     } catch (appError) {
@@ -215,7 +284,7 @@ export function App() {
       setError("");
       setNotice("");
       setRuntimeStep(`正在导出 ${targetFormat.toUpperCase()}`);
-      const result = await exportRound(roundResult.outputPath, targetFormat);
+      const result = await service.exportRound(roundResult.outputPath, targetFormat);
       setNotice(`已导出 ${result.format.toUpperCase()}：${result.path}`);
     } catch (appError) {
       setError(String(appError));
@@ -262,10 +331,21 @@ export function App() {
           busy={busy}
           onPickFile={handlePickFile}
           onRunRound={handleRunRound}
+          pickerLabel={pickerLabel}
         />
       </section>
 
-      <HistoryCard value={history} busy={busy} onDownload={handleHistoryDownload} />
+      <HistoryCard
+        currentDocId={documentStatus?.docId ?? null}
+        currentHistory={history}
+        items={historyItems}
+        open={historyPanelOpen}
+        busy={busy}
+        onToggle={() => setHistoryPanelOpen(!historyPanelOpen)}
+        onSelect={handleSelectHistory}
+        onDelete={handleDeleteHistory}
+        onDownload={handleHistoryDownload}
+      />
 
       <ResultCard
         result={roundResult}

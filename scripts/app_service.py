@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from aigc_records import load_records
+from aigc_records import delete_document, delete_rounds, list_records, normalize_doc_id
 from aigc_round_service import normalize_path
 from docx_pipeline import _split_text_into_blocks, write_docx_text
 from llm_client import chat_completion, test_chat_connection
@@ -14,6 +14,40 @@ from skill_round_helper import build_round_context
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+
+
+def _map_history_round(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "round": int(item.get("round", 0)),
+        "prompt": str(item.get("prompt", "")),
+        "inputPath": str(item.get("input_path", "")),
+        "outputPath": str(item.get("output_path", "")),
+        "manifestPath": str(item.get("manifest_path", "")),
+        "scoreTotal": item.get("score_total"),
+        "chunkLimit": item.get("chunk_limit"),
+        "inputSegmentCount": item.get("input_segment_count"),
+        "outputSegmentCount": item.get("output_segment_count"),
+        "timestamp": str(item.get("timestamp", "")),
+    }
+
+
+def _record_entry_to_history(doc_id: str, entry: dict[str, Any]) -> dict[str, Any]:
+    rounds = entry.get("rounds") if isinstance(entry.get("rounds"), list) else []
+    history_rounds = [_map_history_round(item) for item in rounds if isinstance(item, dict)]
+    history_rounds.sort(key=lambda item: item["round"], reverse=True)
+    completed_rounds = sorted(item["round"] for item in history_rounds)
+    latest_round = history_rounds[0] if history_rounds else None
+    origin_path = str(entry.get("origin_path", doc_id))
+
+    return {
+        "docId": doc_id,
+        "sourcePath": origin_path,
+        "originPath": origin_path,
+        "completedRounds": completed_rounds,
+        "latestOutputPath": latest_round.get("outputPath", "") if latest_round else "",
+        "lastTimestamp": latest_round.get("timestamp", "") if latest_round else "",
+        "rounds": history_rounds,
+    }
 
 
 def emit_progress_event(event: dict[str, Any]) -> None:
@@ -46,7 +80,7 @@ def import_document(source_path: str) -> dict[str, Any]:
 def get_document_status(source_path: str) -> dict[str, Any]:
     normalized_source = normalize_path(Path(source_path))
     context = build_round_context(normalized_source)
-    records = load_records()
+    records = list_records()
     entry = records.get(context.doc_id, {}) if isinstance(records, dict) else {}
     rounds = entry.get("rounds", []) if isinstance(entry, dict) else []
     completed_rounds = [item.get("round") for item in rounds if isinstance(item, dict) and isinstance(item.get("round"), int)]
@@ -73,28 +107,11 @@ def get_document_status(source_path: str) -> dict[str, Any]:
 def get_document_history(source_path: str) -> dict[str, Any]:
     normalized_source = normalize_path(Path(source_path))
     context = build_round_context(normalized_source)
-    records = load_records()
+    records = list_records()
     entry = records.get(context.doc_id, {}) if isinstance(records, dict) else {}
     rounds = entry.get("rounds", []) if isinstance(entry, dict) else []
 
-    history_rounds: list[dict[str, Any]] = []
-    for item in rounds:
-        if not isinstance(item, dict):
-            continue
-        history_rounds.append(
-            {
-                "round": int(item.get("round", 0)),
-                "prompt": str(item.get("prompt", "")),
-                "inputPath": str(item.get("input_path", "")),
-                "outputPath": str(item.get("output_path", "")),
-                "manifestPath": str(item.get("manifest_path", "")),
-                "scoreTotal": item.get("score_total"),
-                "chunkLimit": item.get("chunk_limit"),
-                "inputSegmentCount": item.get("input_segment_count"),
-                "outputSegmentCount": item.get("output_segment_count"),
-                "timestamp": str(item.get("timestamp", "")),
-            }
-        )
+    history_rounds = [_map_history_round(item) for item in rounds if isinstance(item, dict)]
 
     history_rounds.sort(key=lambda item: item["round"], reverse=True)
 
@@ -103,6 +120,27 @@ def get_document_history(source_path: str) -> dict[str, Any]:
         "sourcePath": str(normalized_source),
         "rounds": history_rounds,
     }
+
+
+def list_document_histories() -> dict[str, Any]:
+    records = list_records()
+    items = [
+        _record_entry_to_history(doc_id, entry)
+        for doc_id, entry in records.items()
+        if isinstance(entry, dict)
+    ]
+    items.sort(key=lambda item: (item.get("lastTimestamp", ""), item.get("docId", "")), reverse=True)
+    return {
+        "items": items,
+        "total": len(items),
+    }
+
+
+def delete_document_history(doc_id: str, from_round: int | None = None) -> dict[str, Any]:
+    normalized_doc_id = normalize_doc_id(doc_id)
+    if from_round is None:
+        return delete_document(normalized_doc_id)
+    return delete_rounds(normalized_doc_id, from_round)
 
 
 def run_round_for_app(source_path: str, model_config: dict[str, Any], round_number: int | None = None) -> dict[str, Any]:
@@ -233,6 +271,12 @@ def cli_main() -> None:
     history_parser = subparsers.add_parser("document-history")
     history_parser.add_argument("source_path")
 
+    list_history_parser = subparsers.add_parser("document-history-list")
+
+    delete_history_parser = subparsers.add_parser("delete-document-history")
+    delete_history_parser.add_argument("doc_id")
+    delete_history_parser.add_argument("--from-round", type=int, default=None)
+
     run_parser = subparsers.add_parser("run-round")
     run_parser.add_argument("source_path")
     run_parser.add_argument("model_config_json", nargs="?", default=None)
@@ -262,6 +306,12 @@ def cli_main() -> None:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         elif args.command == "document-history":
             payload = get_document_history(args.source_path)
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        elif args.command == "document-history-list":
+            payload = list_document_histories()
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        elif args.command == "delete-document-history":
+            payload = delete_document_history(args.doc_id, args.from_round)
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         elif args.command == "run-round":
             payload = run_round_for_app(

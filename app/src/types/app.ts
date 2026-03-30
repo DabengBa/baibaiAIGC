@@ -73,6 +73,29 @@ export type DocumentHistory = {
   rounds: HistoryRound[];
 };
 
+export type HistoryDocumentSummary = {
+  docId: string;
+  sourcePath: string;
+  originPath: string;
+  completedRounds: number[];
+  latestOutputPath: string;
+  lastTimestamp: string;
+  rounds: HistoryRound[];
+};
+
+export type HistoryListResponse = {
+  items: HistoryDocumentSummary[];
+  total: number;
+};
+
+export type DeleteHistoryResult = {
+  docId: string;
+  deletedRounds: number[];
+  remainingRounds: number[];
+  removedDocument: boolean;
+  deletedFiles: string[];
+};
+
 export type ExportResult = {
   format: "txt" | "docx";
   path: string;

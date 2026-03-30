@@ -249,6 +249,31 @@ async fn get_document_history(source_path: String) -> Result<serde_json::Value, 
 }
 
 #[tauri::command]
+async fn list_document_histories() -> Result<serde_json::Value, String> {
+    spawn_blocking(move || {
+        let output = run_python_json(&["document-history-list".to_string()])?;
+        serde_json::from_str(&output).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn delete_document_history(doc_id: String, from_round: Option<i32>) -> Result<serde_json::Value, String> {
+    spawn_blocking(move || {
+        let mut args = vec!["delete-document-history".to_string(), doc_id];
+        if let Some(round) = from_round {
+            args.push("--from-round".to_string());
+            args.push(round.to_string());
+        }
+        let output = run_python_json(&args)?;
+        serde_json::from_str(&output).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn run_aigc_round(window: Window, source_path: String, model_config: ModelConfig) -> Result<serde_json::Value, String> {
     spawn_blocking(move || {
         let config_json = serde_json::to_string(&model_config).map_err(|error| error.to_string())?;
@@ -296,6 +321,8 @@ fn main() {
             test_model_connection,
             get_document_status,
             get_document_history,
+            list_document_histories,
+            delete_document_history,
             run_aigc_round,
             read_output_text,
             export_round_output,

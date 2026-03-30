@@ -5,6 +5,7 @@ type Props = {
   busy: boolean;
   onPickFile: () => void;
   onRunRound: () => void;
+  pickerLabel?: string;
 };
 
 function displayDocId(status: DocumentStatus): string {
@@ -16,7 +17,7 @@ function displayDocId(status: DocumentStatus): string {
   return status.docId;
 }
 
-export function DocumentCard({ value, busy, onPickFile, onRunRound }: Props) {
+export function DocumentCard({ value, busy, onPickFile, onRunRound, pickerLabel = "选择文档" }: Props) {
   return (
     <section className="glass-card section-stack">
       <div className="section-header">
@@ -25,7 +26,7 @@ export function DocumentCard({ value, busy, onPickFile, onRunRound }: Props) {
           <p>支持 txt 与 Word。上传 Word 后会先自动提取为中间 txt。</p>
         </div>
         <button className="secondary-button" onClick={onPickFile} disabled={busy}>
-          选择文档
+          {pickerLabel}
         </button>
       </div>
       {value ? (

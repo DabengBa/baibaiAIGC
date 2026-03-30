@@ -119,6 +119,138 @@ def save_records(records: Dict[str, Any]) -> None:
     RECORDS_PATH.write_text(text, encoding="utf-8")
 
 
+def normalize_record_path(path: str) -> str:
+    candidate = str(path or "").strip().replace("\\", "/")
+    while "//" in candidate:
+        candidate = candidate.replace("//", "/")
+    return candidate
+
+
+def normalize_doc_id(doc_id: str) -> str:
+    return normalize_record_path(doc_id)
+
+
+def normalize_records(records: Dict[str, Any]) -> Dict[str, Any]:
+    normalized_records: Dict[str, Any] = {}
+
+    for raw_key, raw_entry in records.items():
+        if not isinstance(raw_entry, dict):
+            continue
+
+        normalized_key = normalize_doc_id(str(raw_key))
+        if not normalized_key:
+            continue
+
+        target_entry = normalized_records.setdefault(
+            normalized_key,
+            {"origin_path": normalized_key, "rounds": []},
+        )
+        target_rounds = target_entry.get("rounds")
+        if not isinstance(target_rounds, list):
+            target_rounds = []
+
+        merged_by_round: Dict[int, Dict[str, Any]] = {
+            int(item.get("round")): item
+            for item in target_rounds
+            if isinstance(item, dict) and isinstance(item.get("round"), int)
+        }
+
+        incoming_rounds = raw_entry.get("rounds")
+        if not isinstance(incoming_rounds, list):
+            incoming_rounds = []
+
+        for item in incoming_rounds:
+            if not isinstance(item, dict):
+                continue
+            round_number = item.get("round")
+            if not isinstance(round_number, int):
+                continue
+            normalized_item = dict(item)
+            for field in ("prompt", "input_path", "output_path", "manifest_path"):
+                value = normalized_item.get(field)
+                if isinstance(value, str):
+                    normalized_item[field] = normalize_record_path(value)
+            merged_by_round[round_number] = normalized_item
+
+        target_entry["origin_path"] = normalize_record_path(str(raw_entry.get("origin_path", normalized_key))) or normalized_key
+        target_entry["rounds"] = [merged_by_round[key] for key in sorted(merged_by_round)]
+
+    return normalized_records
+
+
+def load_records_normalized() -> Dict[str, Any]:
+    raw_records = load_records()
+    normalized_records = normalize_records(raw_records)
+    if normalized_records != raw_records:
+        save_records(normalized_records)
+    return normalized_records
+
+
+def _record_path_to_absolute(path: str) -> Optional[Path]:
+    normalized = normalize_record_path(path)
+    if not normalized:
+        return None
+    candidate = Path(normalized)
+    if not candidate.is_absolute():
+        candidate = ROOT_DIR / candidate
+    return candidate.resolve()
+
+
+def _collect_round_file_paths(rounds: List[Dict[str, Any]]) -> set[Path]:
+    collected: set[Path] = set()
+    for item in rounds:
+        if not isinstance(item, dict):
+            continue
+        for field in ("input_path", "output_path", "manifest_path"):
+            value = item.get(field)
+            if not isinstance(value, str):
+                continue
+            absolute = _record_path_to_absolute(value)
+            if absolute is not None:
+                collected.add(absolute)
+    return collected
+
+
+def _is_safe_generated_artifact(path: Path) -> bool:
+    try:
+        relative = path.relative_to(ROOT_DIR)
+    except ValueError:
+        return False
+
+    relative_parts = relative.parts
+    if not relative_parts:
+        return False
+
+    if relative_parts[0] != "finish":
+        return False
+
+    if len(relative_parts) < 2:
+        return False
+
+    return relative_parts[1] in {"intermediate", "web_exports"}
+
+
+def _delete_artifacts_for_removed_rounds(
+    deleted_rounds: List[Dict[str, Any]],
+    retained_rounds: List[Dict[str, Any]],
+) -> List[str]:
+    retained_paths = _collect_round_file_paths(retained_rounds)
+    deleted_paths = _collect_round_file_paths(deleted_rounds)
+    removed_paths: List[str] = []
+
+    for candidate in sorted(deleted_paths):
+        if candidate in retained_paths:
+            continue
+        if not _is_safe_generated_artifact(candidate):
+            continue
+        if not candidate.exists() or not candidate.is_file():
+            continue
+        candidate.unlink()
+        removed_paths.append(str(candidate.relative_to(ROOT_DIR)).replace("\\", "/"))
+
+    return removed_paths
+
+
 def update_round(
     doc_id: str,
     round_number: int,
@@ -139,11 +271,12 @@ def update_round(
     Returns the updated document record.
     """
 
-    records = load_records()
+    normalized_doc_id = normalize_doc_id(doc_id)
+    records = load_records_normalized()
 
-    doc_entry = records.get(doc_id)
+    doc_entry = records.get(normalized_doc_id)
     if not isinstance(doc_entry, dict):
-        doc_entry = {"origin_path": doc_id, "rounds": []}
+        doc_entry = {"origin_path": normalized_doc_id, "rounds": []}
 
     rounds = doc_entry.get("rounds")
     if not isinstance(rounds, list):
@@ -156,14 +289,14 @@ def update_round(
 
     record = RoundRecord(
         round=round_number,
-        prompt=prompt,
-        input_path=input_path,
-        output_path=output_path,
+        prompt=normalize_record_path(prompt),
+        input_path=normalize_record_path(input_path),
+        output_path=normalize_record_path(output_path),
         score_total=score_total,
         chunk_limit=chunk_limit,
         input_segment_count=input_segment_count,
         output_segment_count=output_segment_count,
-        manifest_path=manifest_path,
+        manifest_path=normalize_record_path(manifest_path) if manifest_path else None,
         timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     )
 
@@ -171,12 +304,82 @@ def update_round(
     # Keep rounds sorted by round number for readability.
     filtered_rounds.sort(key=lambda r: r.get("round", 0))
 
-    doc_entry["origin_path"] = doc_id
+    doc_entry["origin_path"] = normalized_doc_id
     doc_entry["rounds"] = filtered_rounds
-    records[doc_id] = doc_entry
+    records[normalized_doc_id] = doc_entry
 
     save_records(records)
     return doc_entry
+
+
+def list_records() -> Dict[str, Any]:
+    return load_records_normalized()
+
+
+def delete_rounds(doc_id: str, from_round: int) -> Dict[str, Any]:
+    normalized_doc_id = normalize_doc_id(doc_id)
+    records = load_records_normalized()
+    doc_entry = records.get(normalized_doc_id)
+    if not isinstance(doc_entry, dict):
+        raise ValueError(f"Document record not found: {normalized_doc_id}")
+
+    rounds = doc_entry.get("rounds")
+    if not isinstance(rounds, list):
+        rounds = []
+
+    deleted_rounds = [
+        item for item in rounds
+        if isinstance(item, dict) and isinstance(item.get("round"), int) and item.get("round") >= from_round
+    ]
+    if not deleted_rounds:
+        raise ValueError(f"No rounds found from round {from_round} for: {normalized_doc_id}")
+
+    remaining_rounds = [
+        item for item in rounds
+        if isinstance(item, dict) and isinstance(item.get("round"), int) and item.get("round") < from_round
+    ]
+
+    if remaining_rounds:
+        doc_entry["origin_path"] = normalized_doc_id
+        doc_entry["rounds"] = remaining_rounds
+        records[normalized_doc_id] = doc_entry
+    else:
+        records.pop(normalized_doc_id, None)
+
+    save_records(records)
+    removed_files = _delete_artifacts_for_removed_rounds(deleted_rounds, remaining_rounds)
+    return {
+        "docId": normalized_doc_id,
+        "deletedRounds": [int(item["round"]) for item in deleted_rounds],
+        "remainingRounds": [
+            int(item["round"]) for item in remaining_rounds if isinstance(item, dict) and isinstance(item.get("round"), int)
+        ],
+        "removedDocument": not remaining_rounds,
+        "deletedFiles": removed_files,
+    }
+
+
+def delete_document(doc_id: str) -> Dict[str, Any]:
+    normalized_doc_id = normalize_doc_id(doc_id)
+    records = load_records_normalized()
+    doc_entry = records.pop(normalized_doc_id, None)
+    if not isinstance(doc_entry, dict):
+        raise ValueError(f"Document record not found: {normalized_doc_id}")
+    save_records(records)
+    rounds = doc_entry.get("rounds") if isinstance(doc_entry.get("rounds"), list) else []
+    removed_files = _delete_artifacts_for_removed_rounds(
+        [item for item in rounds if isinstance(item, dict)],
+        [],
+    )
+    return {
+        "docId": normalized_doc_id,
+        "deletedRounds": [
+            int(item["round"]) for item in rounds if isinstance(item, dict) and isinstance(item.get("round"), int)
+        ],
+        "remainingRounds": [],
+        "removedDocument": True,
+        "deletedFiles": removed_files,
+    }
 
 
 def show_records(doc_id: Optional[str] = None) -> None:
@@ -185,9 +388,9 @@ def show_records(doc_id: Optional[str] = None) -> None:
     Output is raw JSON on stdout so it can be piped or inspected easily.
     """
 
-    records = load_records()
+    records = load_records_normalized()
     if doc_id is not None:
-        payload: Any = records.get(doc_id, {})
+        payload: Any = records.get(normalize_doc_id(doc_id), {})
     else:
         payload = records
     text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
@@ -208,6 +411,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         nargs="?",
         help="Document identifier (e.g. origin/xxx.txt). If omitted, show all records.",
     )
+
+    delete_parser = subparsers.add_parser(
+        "delete-document", help="Delete a whole document record",
+    )
+    delete_parser.add_argument("doc_id", help="Document identifier to delete.")
+
+    rollback_parser = subparsers.add_parser(
+        "delete-rounds", help="Delete one round and all later rounds for a document",
+    )
+    rollback_parser.add_argument("doc_id", help="Document identifier to modify.")
+    rollback_parser.add_argument("from_round", type=int, help="Delete this round and later rounds.")
 
     update_parser = subparsers.add_parser(
         "update-round", help="Create or update a single document round record",
@@ -287,6 +501,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         )
         text = json.dumps(doc_entry, ensure_ascii=False, indent=2, sort_keys=True)
         print(text)
+    elif args.command == "delete-document":
+        payload = delete_document(args.doc_id)
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    elif args.command == "delete-rounds":
+        payload = delete_rounds(args.doc_id, args.from_round)
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     else:  # pragma: no cover - argparse guarantees command
         parser.error("Unknown command")
 
