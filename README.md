@@ -45,10 +45,6 @@
 ```text
 .
 ├─ app/
-│  ├─ index.html
-│  ├─ package.json
-│  ├─ tsconfig.json
-│  ├─ vite.config.ts
 │  └─ src/
 │     ├─ App.tsx
 │     ├─ main.tsx
@@ -62,34 +58,10 @@
 ├─ requirements.txt
 ├─ origin/
 ├─ finish/
-│  ├─ aigc_records.json
-│  ├─ intermediate/
-│  └─ web_exports/
 ├─ prompts/
-│  ├─ baibaiAIGC1.md
-│  └─ baibaiAIGC2.md
 ├─ references/
-│  ├─ checklist.md
-│  └─ usage.md
 ├─ src-tauri/
-│  ├─ Cargo.toml
-│  ├─ build.rs
-│  ├─ tauri.conf.json
-│  ├─ capabilities/
-│  ├─ gen/
-│  ├─ icons/
-│  └─ src/
 └─ scripts/
-   ├─ aigc_records.py
-   ├─ aigc_round_service.py
-   ├─ app_config.py
-   ├─ app_service.py
-   ├─ chunking.py
-   ├─ docx_pipeline.py
-   ├─ llm_client.py
-   ├─ run_aigc_round.py
-   ├─ skill_round_helper.py
-   └─ web_app.py
 ```
 
 目录约定：
