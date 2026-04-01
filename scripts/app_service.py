@@ -97,7 +97,7 @@ def import_document(source_path: str) -> dict[str, Any]:
     }
 
 
-def get_document_status(source_path: str) -> dict[str, Any]:
+def get_document_status(source_path: str, prompt_profile: str = "cn") -> dict[str, Any]:
     normalized_source = normalize_path(Path(source_path))
     try:
         relative_doc_id = normalized_source.relative_to(ROOT_DIR)
@@ -105,11 +105,18 @@ def get_document_status(source_path: str) -> dict[str, Any]:
     except ValueError:
         doc_id = normalize_doc_id(str(normalized_source))
 
-    round_state = get_document_round_state(doc_id)
+    round_state = get_document_round_state(doc_id, prompt_profile=prompt_profile)
     records = list_records()
     entry = records.get(doc_id, {}) if isinstance(records, dict) else {}
     rounds = entry.get("rounds", []) if isinstance(entry, dict) else []
-    completed_rounds = [item.get("round") for item in rounds if isinstance(item, dict) and isinstance(item.get("round"), int)]
+    normalized_prompt_profile = round_state.prompt_profile
+    completed_rounds = [
+        item.get("round")
+        for item in rounds
+        if isinstance(item, dict)
+        and isinstance(item.get("round"), int)
+        and str(item.get("prompt_profile", "cn") or "cn").strip().lower() == normalized_prompt_profile
+    ]
     completed_rounds.sort()
     latest_output_path = ""
     current_input_path, extracted_from_docx = ensure_skill_input_text(normalized_source)
@@ -117,17 +124,32 @@ def get_document_status(source_path: str) -> dict[str, Any]:
     manifest_path = ""
 
     if round_state.next_round is not None:
-        context = build_round_context(normalized_source, round_number=round_state.next_round)
+        context = build_round_context(
+            normalized_source,
+            round_number=round_state.next_round,
+            prompt_profile=normalized_prompt_profile,
+        )
         current_input_path = context.input_text_path
         current_output_path = str(context.output_text_path)
         manifest_path = str(context.manifest_path)
 
     if rounds:
-        latest_round = max((item for item in rounds if isinstance(item, dict) and isinstance(item.get("round"), int)), key=lambda item: item["round"], default=None)
+        latest_round = max(
+            (
+                item
+                for item in rounds
+                if isinstance(item, dict)
+                and isinstance(item.get("round"), int)
+                and str(item.get("prompt_profile", "cn") or "cn").strip().lower() == normalized_prompt_profile
+            ),
+            key=lambda item: item["round"],
+            default=None,
+        )
         if latest_round:
             latest_output_path = str(normalize_path(Path(str(latest_round.get("output_path", ""))))) if latest_round.get("output_path") else ""
     return {
         "docId": doc_id,
+        "promptProfile": normalized_prompt_profile,
         "sourcePath": str(normalized_source),
         "sourceKind": normalized_source.suffix.lower() or ".txt",
         "completedRounds": completed_rounds,
@@ -213,7 +235,8 @@ def run_round_for_app(source_path: str, model_config: dict[str, Any], round_numb
                 temperature=temperature,
             )
 
-    status = get_document_status(source_path)
+    prompt_profile = str(model_config.get("promptProfile", "cn"))
+    status = get_document_status(source_path, prompt_profile=prompt_profile)
     if bool(status.get("isComplete")):
         raise ValueError(f"Document already completed all {MAX_ROUNDS} rounds.")
 
@@ -221,6 +244,7 @@ def run_round_for_app(source_path: str, model_config: dict[str, Any], round_numb
         source_path,
         transform=transform,
         round_number=round_number,
+        prompt_profile=prompt_profile,
         progress_callback=emit_progress_event,
     )
     return {
@@ -317,6 +341,7 @@ def cli_main() -> None:
 
     status_parser = subparsers.add_parser("document-status")
     status_parser.add_argument("source_path")
+    status_parser.add_argument("prompt_profile", nargs="?", default="cn")
 
     history_parser = subparsers.add_parser("document-history")
     history_parser.add_argument("source_path")
@@ -352,7 +377,7 @@ def cli_main() -> None:
             payload = import_document(args.source_path)
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         elif args.command == "document-status":
-            payload = get_document_status(args.source_path)
+            payload = get_document_status(args.source_path, prompt_profile=args.prompt_profile)
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         elif args.command == "document-history":
             payload = get_document_history(args.source_path)

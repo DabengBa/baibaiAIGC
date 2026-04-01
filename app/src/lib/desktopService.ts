@@ -18,7 +18,7 @@ const defaultModelConfig: ModelConfig = {
   baseUrl: "",
   apiKey: "",
   model: "",
-  apiMode: "responses",
+  apiType: "chat_completions",
   temperature: 0.7,
   offlineMode: false,
   promptProfile: "cn",
