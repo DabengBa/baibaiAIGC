@@ -352,5 +352,5 @@ python scripts/aigc_records.py show origin/毕业论文_原始_utf8.txt
 ## 说明
 
 这个 README 面向后续使用者，目的是让使用方式、目录约定和执行边界一次说清。更严格的行为约束以 [SKILL.md](SKILL.md) 为准。
-## 🙏 致谢
+## 致谢
 感谢 [linuxdo（linux.do） ](https://linux.do/) 社区的交流、分享与反馈。
