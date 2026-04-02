@@ -108,7 +108,7 @@ npm install
 
 #### 模式 A：使用app（点击下方链接）
 
-[![点击下载baibaiAIGC](https://img.shields.io/badge/Download-Windows%20Installer-blue?style=for-the-badge&logo=windows)](https://github.com/poleHansen/baibaiAIGC/releases/tag/v1.0.0)
+[![点击下载baibaiAIGC](https://img.shields.io/badge/Download-Windows%20Installer-blue?style=for-the-badge&logo=windows)](https://github.com/poleHansen/baibaiAIGC/releases)
 
 #### 模式 B：Web 模式
 
