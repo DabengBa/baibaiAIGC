@@ -24,3 +24,5 @@ Thumbs.db
 
 # GitHub metadata (CI, skills, etc.)
 .github/
+
+/.idea

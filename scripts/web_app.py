@@ -10,6 +10,7 @@ from typing import Any
 
 from flask import Flask, Response, jsonify, request, send_file, stream_with_context
 
+from aigc_round_service import normalize_path
 from app_config import load_app_config, save_app_config
 from app_service import (
     delete_document_history,
@@ -25,7 +26,12 @@ from app_service import (
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 ORIGIN_DIR = ROOT_DIR / "origin"
-EXPORT_DIR = ROOT_DIR / "finish" / "web_exports"
+FINISH_DIR = ROOT_DIR / "finish"
+EXPORT_DIR = FINISH_DIR / "web_exports"
+ALLOWED_WEB_ORIGINS = {
+    "http://localhost:1420",
+    "http://127.0.0.1:1420",
+}
 
 
 @dataclass
@@ -55,6 +61,28 @@ def sanitize_filename(filename: str) -> str:
     if not candidate:
         raise ValueError("Filename is required.")
     return candidate
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def require_managed_source_path(path_value: str) -> str:
+    normalized_path = normalize_path(Path(path_value))
+    if not _is_within(normalized_path, ORIGIN_DIR):
+        raise ValueError("sourcePath must stay within the managed origin directory.")
+    return str(normalized_path)
+
+
+def require_managed_output_path(path_value: str) -> str:
+    normalized_path = normalize_path(Path(path_value))
+    if not _is_within(normalized_path, FINISH_DIR):
+        raise ValueError("outputPath must stay within the managed finish directory.")
+    return str(normalized_path)
 
 
 def write_uploaded_file(filename: str, content: str) -> Path:
@@ -95,17 +123,10 @@ def finalize_progress(run_id: str, *, result: dict[str, Any] | None = None, erro
 
 def run_round_async(run_id: str, source_path: str, model_config: dict[str, Any]) -> None:
     try:
-        from app_service import emit_progress_event as original_emit_progress_event
-        import app_service
-
         def capture_progress(event: dict[str, Any]) -> None:
             append_progress_event(run_id, event)
 
-        app_service.emit_progress_event = capture_progress
-        try:
-            result = run_round_for_app(source_path, model_config)
-        finally:
-            app_service.emit_progress_event = original_emit_progress_event
+        result = run_round_for_app(source_path, model_config, progress_callback=capture_progress)
         finalize_progress(run_id, result=result)
     except Exception as exc:
         finalize_progress(run_id, error=str(exc))
@@ -118,6 +139,14 @@ def require_query_value(key: str) -> str:
     return value
 
 
+@app.before_request
+def validate_origin() -> tuple[Response, int] | None:
+    origin = request.headers.get("Origin", "").strip()
+    if origin and origin not in ALLOWED_WEB_ORIGINS:
+        return error_response("Origin not allowed.", 403)
+    return None
+
+
 @app.route("/api/<path:_path>", methods=["OPTIONS"])
 @app.route("/api", methods=["OPTIONS"])
 def options_api(_path: str | None = None) -> Response:
@@ -126,9 +155,12 @@ def options_api(_path: str | None = None) -> Response:
 
 @app.after_request
 def add_cors_headers(response: Response) -> Response:
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+    origin = request.headers.get("Origin", "").strip()
+    if origin in ALLOWED_WEB_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+        response.headers["Vary"] = "Origin"
     return response
 
 
@@ -176,7 +208,8 @@ def post_upload_document() -> tuple[Response, int] | Response:
 def get_status() -> tuple[Response, int] | Response:
     try:
         prompt_profile = request.args.get("promptProfile", "cn")
-        return jsonify(get_document_status(require_query_value("sourcePath"), prompt_profile=prompt_profile))
+        source_path = require_managed_source_path(require_query_value("sourcePath"))
+        return jsonify(get_document_status(source_path, prompt_profile=prompt_profile))
     except Exception as exc:
         return error_response(str(exc))
 
@@ -184,7 +217,8 @@ def get_status() -> tuple[Response, int] | Response:
 @app.route("/api/document-history", methods=["GET"])
 def get_history() -> tuple[Response, int] | Response:
     try:
-        return jsonify(get_document_history(require_query_value("sourcePath")))
+        source_path = require_managed_source_path(require_query_value("sourcePath"))
+        return jsonify(get_document_history(source_path))
     except Exception as exc:
         return error_response(str(exc))
 
@@ -215,7 +249,8 @@ def delete_history() -> tuple[Response, int] | Response:
 @app.route("/api/read-output", methods=["GET"])
 def get_read_output() -> tuple[Response, int] | Response:
     try:
-        return jsonify(read_output_text(require_query_value("outputPath")))
+        output_path = require_managed_output_path(require_query_value("outputPath"))
+        return jsonify(read_output_text(output_path))
     except Exception as exc:
         return error_response(str(exc))
 
@@ -224,10 +259,8 @@ def get_read_output() -> tuple[Response, int] | Response:
 def post_run_round() -> tuple[Response, int] | Response:
     try:
         payload = request.get_json(silent=True) or {}
-        source_path = str(payload.get("sourcePath", "")).strip()
+        source_path = require_managed_source_path(str(payload.get("sourcePath", "")).strip())
         model_config = payload.get("modelConfig")
-        if not source_path:
-            raise ValueError("sourcePath is required.")
         if not isinstance(model_config, dict):
             raise ValueError("modelConfig is required.")
         run_id = uuid.uuid4().hex
@@ -246,7 +279,7 @@ def post_run_round() -> tuple[Response, int] | Response:
 @app.route("/api/export-round", methods=["GET"])
 def get_export_round() -> tuple[Response, int] | Response:
     try:
-        output_path = require_query_value("outputPath")
+        output_path = require_managed_output_path(require_query_value("outputPath"))
         target_format = require_query_value("targetFormat")
         stem = Path(output_path).stem or "current-round"
         export_path = EXPORT_DIR / f"{stem}.{target_format}"
@@ -284,9 +317,12 @@ def get_run_round_events(run_id: str) -> tuple[Response, int] | Response:
                     else:
                         payload = json.dumps(state.result or {}, ensure_ascii=False)
                         yield f"event: result\ndata: {payload}\n\n"
+                    RUN_STATES.pop(run_id, None)
                     return
 
-    return Response(stream_with_context(generate()), mimetype="text/event-stream")
+    response = Response(stream_with_context(generate()), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.errorhandler(404)

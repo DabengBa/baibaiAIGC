@@ -4,16 +4,18 @@ import json
 import sys
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from aigc_records import delete_document, delete_rounds, list_records, normalize_doc_id
 from aigc_round_service import MAX_ROUNDS, build_progress_path, normalize_path
+from app_config import normalize_model_config
 from docx_pipeline import _split_text_into_blocks, write_docx_text
 from llm_client import llm_completion, test_llm_connection
 from skill_round_helper import build_round_context, ensure_skill_input_text, get_document_round_state
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 
 def _read_progress_summary(manifest_path: str) -> dict[str, Any]:
@@ -278,15 +280,22 @@ def delete_document_history(doc_id: str, from_round: int | None = None) -> dict[
     return delete_rounds(normalized_doc_id, from_round)
 
 
-def run_round_for_app(source_path: str, model_config: dict[str, Any], round_number: int | None = None) -> dict[str, Any]:
+def run_round_for_app(
+    source_path: str,
+    model_config: dict[str, Any],
+    round_number: int | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> dict[str, Any]:
     from skill_round_helper import run_skill_round
 
-    base_url = str(model_config.get("baseUrl", "")).strip()
-    api_key = str(model_config.get("apiKey", "")).strip()
-    model = str(model_config.get("model", "")).strip()
-    api_type = str(model_config.get("apiType", "chat_completions")).strip()
-    temperature = float(model_config.get("temperature", 0.7))
-    offline_mode = bool(model_config.get("offlineMode", False))
+    normalized_config = normalize_model_config(model_config)
+    base_url = str(normalized_config["baseUrl"])
+    api_key = str(normalized_config["apiKey"])
+    model = str(normalized_config["model"])
+    api_type = str(normalized_config["apiType"])
+    temperature = float(normalized_config["temperature"])
+    offline_mode = bool(normalized_config["offlineMode"])
+    prompt_profile = str(normalized_config["promptProfile"])
 
     if not offline_mode and (not base_url or not api_key or not model):
         raise ValueError("Model configuration is incomplete.")
@@ -308,17 +317,17 @@ def run_round_for_app(source_path: str, model_config: dict[str, Any], round_numb
             except Exception as exc:
                 raise RuntimeError(f"LLM request failed for chunk {chunk_id}: {exc}") from exc
 
-    prompt_profile = str(model_config.get("promptProfile", "cn"))
     status = get_document_status(source_path, prompt_profile=prompt_profile)
     if bool(status.get("isComplete")):
         raise ValueError(f"Document already completed all {MAX_ROUNDS} rounds.")
 
+    active_progress_callback = progress_callback or emit_progress_event
     result = run_skill_round(
         source_path,
         transform=transform,
         round_number=round_number,
         prompt_profile=prompt_profile,
-        progress_callback=emit_progress_event,
+        progress_callback=active_progress_callback,
     )
     return {
         "round": int(result["round"]),
@@ -338,11 +347,12 @@ def run_round_for_app(source_path: str, model_config: dict[str, Any], round_numb
 
 
 def test_model_connection(model_config: dict[str, Any]) -> dict[str, Any]:
-    base_url = str(model_config.get("baseUrl", "")).strip()
-    api_key = str(model_config.get("apiKey", "")).strip()
-    model = str(model_config.get("model", "")).strip()
-    api_type = str(model_config.get("apiType", "chat_completions")).strip()
-    offline_mode = bool(model_config.get("offlineMode", False))
+    normalized_config = normalize_model_config(model_config)
+    base_url = str(normalized_config["baseUrl"])
+    api_key = str(normalized_config["apiKey"])
+    model = str(normalized_config["model"])
+    api_type = str(normalized_config["apiType"])
+    offline_mode = bool(normalized_config["offlineMode"])
 
     if offline_mode:
         return {
@@ -351,6 +361,7 @@ def test_model_connection(model_config: dict[str, Any]) -> dict[str, Any]:
             "message": "当前为离线模式，无需测试远程连通性。",
             "endpoint": "",
             "model": model,
+            "apiType": api_type,
         }
 
     if not base_url or not api_key or not model:
@@ -400,9 +411,9 @@ def read_output_text(output_path: str) -> dict[str, Any]:
 def load_model_config_payload(model_config_json: str | None = None, model_config_file: str | None = None) -> dict[str, Any]:
     if model_config_file:
         config_path = Path(model_config_file).resolve()
-        return json.loads(config_path.read_text(encoding="utf-8"))
+        return normalize_model_config(json.loads(config_path.read_text(encoding="utf-8")))
     if model_config_json:
-        return json.loads(model_config_json)
+        return normalize_model_config(json.loads(model_config_json))
     raise ValueError("Either model_config_json or model_config_file must be provided.")
 
 

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { AppService, PickedDocument } from "./appService";
+import { normalizeModelConfig } from "../types/app";
 import type {
   DeleteHistoryResult,
   DocumentHistory,
@@ -14,25 +15,15 @@ import type {
   TestConnectionResult,
 } from "../types/app";
 
-const defaultModelConfig: ModelConfig = {
-  baseUrl: "",
-  apiKey: "",
-  model: "",
-  apiType: "chat_completions",
-  temperature: 0.7,
-  offlineMode: false,
-  promptProfile: "cn",
-};
-
 export const desktopService: AppService = {
   async loadModelConfig(): Promise<ModelConfig> {
     const config = await invoke<Partial<ModelConfig>>("load_model_config");
-    return { ...defaultModelConfig, ...config };
+    return normalizeModelConfig(config);
   },
 
   async saveModelConfig(config: ModelConfig): Promise<ModelConfig> {
     const saved = await invoke<Partial<ModelConfig>>("save_model_config", { config });
-    return { ...defaultModelConfig, ...saved };
+    return normalizeModelConfig(saved);
   },
 
   async testModelConnection(config: ModelConfig): Promise<TestConnectionResult> {

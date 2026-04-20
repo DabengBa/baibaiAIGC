@@ -48,6 +48,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--api-type", default=None, help="API type: chat_completions or responses.")
     parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature for API mode.")
+    parser.add_argument("--prompt-profile", default="cn", help="Prompt profile: cn or en.")
     parser.add_argument(
         "--echo-prompt-inputs",
         action="store_true",
@@ -88,7 +89,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     else:
         parser.error("No API configuration found. Provide api_key, model, and base_url, or use --dry-run for chunk verification only.")
 
-    prompt_text = load_prompt(args.round)
+    prompt_text = load_prompt(args.prompt_profile, args.round)
 
     def transform(chunk_text: str, prompt_input: str, round_number: int, chunk_id: str) -> str:
         if args.echo_prompt_inputs:
@@ -103,6 +104,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         manifest_path=args.manifest_path,
         chunk_limit=args.chunk_limit,
         score_total=args.score_total,
+        prompt_profile=args.prompt_profile,
         transform=transform,
     )
     if debug_payload:

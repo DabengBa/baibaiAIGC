@@ -1,15 +1,6 @@
 import { create } from "zustand";
+import { DEFAULT_MODEL_CONFIG } from "../types/app";
 import type { DocumentHistory, DocumentStatus, HistoryDocumentSummary, ModelConfig, RoundProgress, RoundResult } from "../types/app";
-
-const defaultModelConfig: ModelConfig = {
-  baseUrl: "",
-  apiKey: "",
-  model: "",
-  apiType: "chat_completions",
-  temperature: 0.7,
-  offlineMode: false,
-  promptProfile: "cn",
-};
 
 type AppState = {
   modelConfig: ModelConfig;
@@ -39,7 +30,7 @@ type AppState = {
 };
 
 export const useAppState = create<AppState>((set) => ({
-  modelConfig: defaultModelConfig,
+  modelConfig: DEFAULT_MODEL_CONFIG,
   documentStatus: null,
   history: null,
   historyItems: [],

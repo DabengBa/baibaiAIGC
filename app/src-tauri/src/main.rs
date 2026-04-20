@@ -17,6 +17,7 @@ struct TestConnectionResult {
     message: String,
     endpoint: String,
     model: String,
+    api_type: Option<String>,
     status: Option<i32>,
 }
 
@@ -32,6 +33,7 @@ struct ModelConfig {
     base_url: String,
     api_key: String,
     model: String,
+    api_type: String,
     temperature: f64,
     offline_mode: bool,
     prompt_profile: String,

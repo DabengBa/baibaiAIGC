@@ -1,4 +1,5 @@
 import type { AppService, PickedDocument } from "./appService";
+import { normalizeModelConfig } from "../types/app";
 import type {
   DeleteHistoryResult,
   DocumentHistory,
@@ -13,15 +14,15 @@ import type {
 
 const WEB_API_BASE = (globalThis as { __BAIBAIAIGC_WEB_API__?: string }).__BAIBAIAIGC_WEB_API__ ?? "";
 
-const defaultModelConfig: ModelConfig = {
-  baseUrl: "",
-  apiKey: "",
-  model: "",
-  apiType: "chat_completions",
-  temperature: 0.7,
-  offlineMode: false,
-  promptProfile: "cn",
+type ProgressListener = (payload: RoundProgress) => void;
+
+type RunStream = {
+  progressListeners: Set<ProgressListener>;
+  resultPromise: Promise<RoundResult>;
+  close: () => void;
 };
+
+const runStreams = new Map<string, RunStream>();
 
 async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${WEB_API_BASE}${input}`, {
@@ -71,24 +72,122 @@ function downloadBlob(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+function parseMessageEvent<T>(event: Event, fallbackMessage: string): T {
+  if (!(event instanceof MessageEvent) || typeof event.data !== "string") {
+    throw new Error(fallbackMessage);
+  }
+  return JSON.parse(event.data) as T;
+}
+
+function createRunStream(runToken: string): RunStream {
+  let closed = false;
+  let settled = false;
+  let resolveResult!: (value: RoundResult) => void;
+  let rejectResult!: (reason: Error) => void;
+
+  const progressListeners = new Set<ProgressListener>();
+  const eventSource = new EventSource(`${WEB_API_BASE}/api/run-round-events/${runToken}`);
+
+  const close = () => {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    eventSource.close();
+    runStreams.delete(runToken);
+  };
+
+  const settleResult = (value: RoundResult) => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    resolveResult(value);
+    close();
+  };
+
+  const settleError = (message: string) => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    rejectResult(new Error(message));
+    close();
+  };
+
+  const resultPromise = new Promise<RoundResult>((resolve, reject) => {
+    resolveResult = resolve;
+    rejectResult = reject as (reason: Error) => void;
+  });
+
+  eventSource.addEventListener("progress", (event) => {
+    try {
+      const payload = parseMessageEvent<RoundProgress>(event, "Invalid progress event.");
+      progressListeners.forEach((listener) => listener(payload));
+    } catch (error) {
+      settleError(error instanceof Error ? error.message : "Invalid progress event.");
+    }
+  });
+
+  eventSource.addEventListener("result", (event) => {
+    try {
+      settleResult(parseMessageEvent<RoundResult>(event, "Invalid run result."));
+    } catch (error) {
+      settleError(error instanceof Error ? error.message : "Invalid run result.");
+    }
+  });
+
+  eventSource.addEventListener("error", (event) => {
+    if (!(event instanceof MessageEvent) || typeof event.data !== "string") {
+      return;
+    }
+    try {
+      const payload = JSON.parse(event.data) as { message?: string };
+      settleError(payload.message || "Run round failed.");
+    } catch {
+      settleError("Run round failed.");
+    }
+  });
+
+  eventSource.onerror = () => {
+    settleError("Progress channel disconnected.");
+  };
+
+  return {
+    progressListeners,
+    resultPromise,
+    close,
+  };
+}
+
+function getRunStream(runToken: string): RunStream {
+  const existing = runStreams.get(runToken);
+  if (existing) {
+    return existing;
+  }
+  const stream = createRunStream(runToken);
+  runStreams.set(runToken, stream);
+  return stream;
+}
+
 export const webService: AppService = {
   async loadModelConfig(): Promise<ModelConfig> {
     const config = await requestJson<Partial<ModelConfig>>("/api/model-config");
-    return { ...defaultModelConfig, ...config };
+    return normalizeModelConfig(config);
   },
 
   async saveModelConfig(config: ModelConfig): Promise<ModelConfig> {
     const saved = await requestJson<Partial<ModelConfig>>("/api/model-config", {
       method: "POST",
-      body: JSON.stringify(config),
+      body: JSON.stringify(normalizeModelConfig(config)),
     });
-    return { ...defaultModelConfig, ...saved };
+    return normalizeModelConfig(saved);
   },
 
   async testModelConnection(config: ModelConfig): Promise<TestConnectionResult> {
     return requestJson<TestConnectionResult>("/api/test-connection", {
       method: "POST",
-      body: JSON.stringify(config),
+      body: JSON.stringify(normalizeModelConfig(config)),
     });
   },
 
@@ -129,8 +228,10 @@ export const webService: AppService = {
     });
   },
 
-  async getDocumentStatus(sourcePath: string): Promise<DocumentStatus> {
-    return requestJson<DocumentStatus>(`/api/document-status?sourcePath=${encodeURIComponent(sourcePath)}`);
+  async getDocumentStatus(sourcePath: string, modelConfig: ModelConfig): Promise<DocumentStatus> {
+    return requestJson<DocumentStatus>(
+      `/api/document-status?sourcePath=${encodeURIComponent(sourcePath)}&promptProfile=${encodeURIComponent(modelConfig.promptProfile)}`,
+    );
   },
 
   async getDocumentHistory(sourcePath: string): Promise<DocumentHistory> {
@@ -151,45 +252,26 @@ export const webService: AppService = {
   async startRunRound(sourcePath: string, modelConfig: ModelConfig): Promise<string | null> {
     const { runId } = await requestJson<{ runId: string }>("/api/run-round", {
       method: "POST",
-      body: JSON.stringify({ sourcePath, modelConfig }),
+      body: JSON.stringify({ sourcePath, modelConfig: normalizeModelConfig(modelConfig) }),
     });
     return runId;
   },
 
-  async awaitRunRound(_: string, __: ModelConfig, runToken?: string | null): Promise<RoundResult> {
+  async awaitRunRound(_sourcePath: string, _modelConfig: ModelConfig, runToken?: string | null): Promise<RoundResult> {
     if (!runToken) {
       throw new Error("runToken is required in web mode.");
     }
-    return new Promise<RoundResult>((resolve, reject) => {
-      const eventSource = new EventSource(`${WEB_API_BASE}/api/run-round-events/${runToken}`);
-      eventSource.addEventListener("result", (event) => {
-        eventSource.close();
-        resolve(JSON.parse((event as MessageEvent).data) as RoundResult);
-      });
-      eventSource.addEventListener("error", (event) => {
-        eventSource.close();
-        const payload = JSON.parse((event as MessageEvent).data) as { message?: string };
-        reject(new Error(payload.message || "Run round failed."));
-      });
-      eventSource.onerror = () => {
-        eventSource.close();
-        reject(new Error("Progress channel disconnected."));
-      };
-    });
+    return getRunStream(runToken).resultPromise;
   },
 
   async listenRoundProgress(onProgress: (payload: RoundProgress) => void, runToken?: string | null): Promise<() => void> {
     if (!runToken) {
-      return async () => undefined;
+      return () => undefined;
     }
-    const eventSource = new EventSource(`${WEB_API_BASE}/api/run-round-events/${runToken}`);
-    const handler = (event: Event) => {
-      const message = event as MessageEvent;
-      onProgress(JSON.parse(message.data) as RoundProgress);
-    };
-    eventSource.addEventListener("progress", handler);
-    return async () => {
-      eventSource.close();
+    const stream = getRunStream(runToken);
+    stream.progressListeners.add(onProgress);
+    return () => {
+      stream.progressListeners.delete(onProgress);
     };
   },
 

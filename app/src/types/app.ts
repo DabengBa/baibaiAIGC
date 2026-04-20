@@ -1,15 +1,49 @@
+export type ApiType = "chat_completions" | "responses";
+export type PromptProfile = "cn" | "en";
+export type RoundProgressPhase =
+  | "chunking-ready"
+  | "chunk-skipped"
+  | "processing-chunk"
+  | "chunk-error"
+  | "chunk-complete"
+  | "restoring-output";
+
 export type ModelConfig = {
   baseUrl: string;
   apiKey: string;
   model: string;
-  apiType: "chat_completions" | "responses";
+  apiType: ApiType;
   temperature: number;
   offlineMode: boolean;
-  promptProfile: "cn" | "en";
+  promptProfile: PromptProfile;
 };
 
+export const DEFAULT_MODEL_CONFIG: ModelConfig = {
+  baseUrl: "",
+  apiKey: "",
+  model: "",
+  apiType: "chat_completions",
+  temperature: 0.7,
+  offlineMode: false,
+  promptProfile: "cn",
+};
+
+export function normalizeModelConfig(config?: Partial<ModelConfig> | null): ModelConfig {
+  return {
+    baseUrl: String(config?.baseUrl ?? DEFAULT_MODEL_CONFIG.baseUrl),
+    apiKey: String(config?.apiKey ?? DEFAULT_MODEL_CONFIG.apiKey),
+    model: String(config?.model ?? DEFAULT_MODEL_CONFIG.model),
+    apiType: config?.apiType === "responses" ? "responses" : "chat_completions",
+    temperature: typeof config?.temperature === "number" && Number.isFinite(config.temperature)
+      ? config.temperature
+      : DEFAULT_MODEL_CONFIG.temperature,
+    offlineMode: Boolean(config?.offlineMode),
+    promptProfile: config?.promptProfile === "en" ? "en" : "cn",
+  };
+}
+
 export type RoundProgress = {
-  phase: string;
+  phase: RoundProgressPhase;
   round: number;
   currentChunk?: number;
   totalChunks?: number;
@@ -33,7 +67,7 @@ export type TestConnectionResult = {
   message: string;
   endpoint: string;
   model: string;
-  apiType?: "chat_completions" | "responses";
+  apiType?: ApiType;
   status?: number;
 };
 

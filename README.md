@@ -193,13 +193,13 @@ python scripts/run_aigc_round.py origin/毕业论文_原始_utf8.txt 1 origin/�
 ### 第 1 轮示例
 
 ```powershell
-python scripts/run_aigc_round.py origin/毕业论文_原始_utf8.txt 1 origin/毕业论文_原始_utf8.txt finish/intermediate/毕业论文_原始_utf8_round1.txt finish/intermediate/毕业论文_原始_utf8_round1_manifest.json --chunk-limit 850
+python scripts/run_aigc_round.py origin/毕业论文_原始_utf8.txt 1 origin/毕业论文_原始_utf8.txt finish/intermediate/毕业论文_原始_utf8_round1.txt finish/intermediate/毕业论文_原始_utf8_round1_manifest.json --prompt-profile cn --chunk-limit 850
 ```
 
 ### 第 2 轮示例
 
 ```powershell
-python scripts/run_aigc_round.py origin/毕业论文_原始_utf8.txt 2 finish/intermediate/毕业论文_原始_utf8_round1.txt finish/intermediate/毕业论文_原始_utf8_round2.txt finish/intermediate/毕业论文_原始_utf8_round2_manifest.json --chunk-limit 850
+python scripts/run_aigc_round.py origin/毕业论文_原始_utf8.txt 2 finish/intermediate/毕业论文_原始_utf8_round1.txt finish/intermediate/毕业论文_原始_utf8_round2.txt finish/intermediate/毕业论文_原始_utf8_round2_manifest.json --prompt-profile cn --chunk-limit 850
 ```
 如果暂时不想调用模型，可以使用 `--dry-run`：
 
