@@ -1,5 +1,5 @@
 # baibaiAIGC
-
+![alt text](e7d4bdd094205b9e244508aca83e4d3a.png)
 一个用于中文论文、摘要、课程作业和技术文档多轮降 AIGC 改写的工作目录。
 
 本仓库支持四种使用方式：
