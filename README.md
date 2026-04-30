@@ -355,3 +355,12 @@ python scripts/aigc_records.py show origin/毕业论文_原始_utf8.txt
 这个 README 面向后续使用者，目的是让使用方式、目录约定和执行边界一次说清。更严格的行为约束以 [SKILL.md](SKILL.md) 为准。
 ## 致谢
 感谢 [linuxdo（linux.do） ](https://linux.do/) 社区的交流、分享与反馈。
+## Star History
+
+<a href="https://www.star-history.com/?repos=poleHansen%2FbaibaiAIGC&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=poleHansen/baibaiAIGC&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=poleHansen/baibaiAIGC&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=poleHansen/baibaiAIGC&type=date&legend=top-left" />
+ </picture>
+</a>
