@@ -3,9 +3,16 @@ import { DocumentCard } from "./components/DocumentCard";
 import { HistoryCard } from "./components/HistoryCard";
 import { ModelConfigCard } from "./components/ModelConfigCard";
 import { ResultCard } from "./components/ResultCard";
-import { useAppState } from "./hooks/useAppState";
+import { useAppState, type ActivePreview } from "./hooks/useAppState";
 import type { AppService } from "./lib/appService";
-import type { HistoryDocumentSummary, HistoryRound, RoundProgress } from "./types/app";
+import type {
+  ApplyMode,
+  HistoryDocumentSummary,
+  HistoryRevision,
+  HistoryRound,
+  RoundProgress,
+  RunExecutionOptions,
+} from "./types/app";
 
 type Props = {
   service: AppService;
@@ -15,9 +22,9 @@ type Props = {
 type PageKey = "workspace" | "history" | "result";
 
 const PAGE_META: Array<{ key: PageKey; title: string; description: string }> = [
-  { key: "workspace", title: "文档工作台", description: "模型设置与文档导入" },
-  { key: "history", title: "历史记录", description: "已处理文档与轮次输出" },
-  { key: "result", title: "本轮结果", description: "输出预览与导出" },
+  { key: "workspace", title: "文档工作台", description: "模型设置、导入文档和整轮续跑" },
+  { key: "history", title: "历史记录", description: "查看轮次结果、修订版与导出记录" },
+  { key: "result", title: "预览", description: "按段落选择后生成修订版或下一轮局部处理" },
 ];
 
 function formatRuntimeStep(progress: RoundProgress | null, fallback: string): string {
@@ -39,13 +46,13 @@ function formatRuntimeStep(progress: RoundProgress | null, fallback: string): st
     return `第 ${progress.round} 轮跳过已完成块，第 ${progress.currentChunk}/${progress.totalChunks} 块已复用`;
   }
   if (progress.phase === "restoring-output") {
-    return `第 ${progress.round} 轮已完成分块处理，正在合并输出`;
+    return `第 ${progress.round} 轮分块处理完成，正在恢复完整输出`;
   }
   if (progress.phase === "chunk-complete" && progress.currentChunk && progress.totalChunks) {
     return `第 ${progress.round} 轮已完成第 ${progress.currentChunk}/${progress.totalChunks} 块`;
   }
   if (progress.phase === "stopped") {
-    return progress.message || `第 ${progress.round} 轮已停止，可以从当前进度继续`;
+    return progress.message || `第 ${progress.round} 轮已停止，可从当前进度继续`;
   }
   return fallback;
 }
@@ -74,7 +81,24 @@ function describeProgressStatus(status: string): string {
 }
 
 function describePromptProfile(promptProfile: "cn" | "en"): string {
-  return promptProfile === "en" ? "英文单轮提示词" : "中文两轮提示词";
+  return promptProfile === "en" ? "英文单轮提示词" : "中文双轮提示词";
+}
+
+function buildActivePreviewFromVersion(
+  label: string,
+  item: HistoryRound | HistoryRevision,
+  preview: Awaited<ReturnType<AppService["readOutputPreview"]>>,
+): ActivePreview {
+  return {
+    label,
+    round: item.kind === "revision" ? item.sourceRound ?? item.targetRound ?? 0 : item.round,
+    revisionNumber: item.kind === "revision" ? item.revisionNumber : item.revisionNumber ?? null,
+    outputPath: item.outputPath,
+    manifestPath: item.manifestPath,
+    kind: item.kind,
+    sourceRound: item.kind === "revision" ? item.sourceRound ?? item.targetRound ?? 0 : item.round,
+    preview,
+  };
 }
 
 export function App({ service, pickerLabel }: Props) {
@@ -89,7 +113,8 @@ export function App({ service, pickerLabel }: Props) {
     historyPanelOpen,
     roundResult,
     progress,
-    previewText,
+    activePreview,
+    selectedParagraphIndexes,
     runtimeStep,
     notice,
     busy,
@@ -102,6 +127,8 @@ export function App({ service, pickerLabel }: Props) {
     setRoundResult,
     setProgress,
     setPreviewText,
+    setActivePreview,
+    setSelectedParagraphIndexes,
     setRuntimeStep,
     setNotice,
     setBusy,
@@ -143,32 +170,38 @@ export function App({ service, pickerLabel }: Props) {
     return result.items;
   }
 
+  function clearPreviewSelection() {
+    setSelectedParagraphIndexes([]);
+  }
+
   async function handleSelectHistory(item: HistoryDocumentSummary) {
     try {
       setBusy(true);
       setError("");
       setNotice("");
-      setRuntimeStep("正在载入历史文档");
+      setRuntimeStep("正在加载历史文档");
       const status = await refreshDocumentState(item.sourcePath);
       setCurrentPage("workspace");
       setRoundResult(null);
       setPreviewText("");
+      setActivePreview(null);
+      clearPreviewSelection();
       setNotice(`已切换到历史文档，${describeDocumentProgress(status.nextRound, status.hasNextRound)}`);
       setRuntimeStep(
         status.hasNextRound && status.nextRound
-          ? `已载入历史文档，当前到第 ${status.nextRound} 轮`
-          : "已载入历史文档，全部轮次已完成",
+          ? `已加载历史文档，当前可执行第 ${status.nextRound} 轮`
+          : "已加载历史文档，全部轮次已完成",
       );
     } catch (appError) {
       setError(String(appError));
-      setRuntimeStep("载入历史文档失败");
+      setRuntimeStep("加载历史文档失败");
     } finally {
       setBusy(false);
     }
   }
 
   async function handleDeleteHistory(docId: string, fromRound?: number) {
-    const actionLabel = fromRound ? `删除第 ${fromRound} 轮及之后历史` : "删除整条历史";
+    const actionLabel = fromRound ? `删除第 ${fromRound} 轮及之后的历史` : "删除整条历史";
     try {
       setBusy(true);
       setError("");
@@ -182,12 +215,16 @@ export function App({ service, pickerLabel }: Props) {
           setHistory(null);
           setRoundResult(null);
           setPreviewText("");
+          setActivePreview(null);
+          clearPreviewSelection();
         } else {
           const matchedItem = items.find((entry) => entry.docId === docId);
           if (matchedItem) {
             await refreshDocumentState(matchedItem.sourcePath);
             setRoundResult(null);
             setPreviewText("");
+            setActivePreview(null);
+            clearPreviewSelection();
           }
         }
       }
@@ -230,7 +267,7 @@ export function App({ service, pickerLabel }: Props) {
       setBusy(true);
       setError("");
       setNotice("");
-      setRuntimeStep(modelConfig.offlineMode ? "离线模式无需测试远程接口" : "正在测试接口连通性");
+      setRuntimeStep(modelConfig.offlineMode ? "离线模式无需测试接口" : "正在测试接口连通性");
       const result = await service.testModelConnection(modelConfig);
       setNotice(
         result.message
@@ -260,22 +297,37 @@ export function App({ service, pickerLabel }: Props) {
       }
       const status = await refreshDocumentState(picked.sourcePath);
       await refreshHistoryList();
-      setCurrentPage("workspace");
+      const preview = await service.readSourcePreview(status.currentInputPath, status.manifestPath, modelConfig.promptProfile);
+      setCurrentPage("result");
       setHistoryPanelOpen(true);
       setRoundResult(null);
-      setPreviewText("");
+      setPreviewText(preview.text);
+      setActivePreview({
+        label: "初始预览",
+        round: 0,
+        revisionNumber: null,
+        outputPath: status.currentInputPath,
+        manifestPath: status.manifestPath,
+        kind: "round",
+        sourceRound: 0,
+        preview,
+      });
+      clearPreviewSelection();
       setRuntimeStep(
         status.hasNextRound && status.nextRound
-          ? `已载入文档，当前到第 ${status.nextRound} 轮`
+          ? `已载入文档，当前可执行第 ${status.nextRound} 轮`
           : "已载入文档，全部轮次已完成",
       );
       const resumeNotice = status.totalChunkCount && status.completedChunkCount
         ? `检测到第 ${status.nextRound} 轮已有 ${status.completedChunkCount}/${status.totalChunkCount} 块进度，可直接续跑。`
         : "";
+      const partialNotice = status.targetParagraphIndexes.length
+        ? ` 当前断点仅处理 ${status.targetParagraphIndexes.length} 段。`
+        : "";
       const errorNotice = status.lastError ? ` 当前暂停原因：${status.lastError}` : "";
       const stopNotice = status.stopReason ? ` 当前停止说明：${status.stopReason}` : "";
       setNotice(
-        `已导入文档，当前使用 ${describePromptProfile(modelConfig.promptProfile)}，${describeDocumentProgress(status.nextRound, status.hasNextRound)}${resumeNotice}${errorNotice}${stopNotice}`,
+        `已导入文档，当前使用 ${describePromptProfile(modelConfig.promptProfile)}，${describeDocumentProgress(status.nextRound, status.hasNextRound)}${resumeNotice}${partialNotice}${errorNotice}${stopNotice}`,
       );
     } catch (appError) {
       setError(String(appError));
@@ -304,12 +356,12 @@ export function App({ service, pickerLabel }: Props) {
     }
   }
 
-  async function handleRunRound() {
+  async function executeRound(executionOptions?: RunExecutionOptions | null) {
     if (!documentStatus) {
       setNotice("请先导入一个 txt 或 docx 文档。");
       return;
     }
-    if (!documentStatus.hasNextRound || documentStatus.isComplete || !documentStatus.nextRound) {
+    if (!documentStatus.hasNextRound && !executionOptions) {
       setNotice("当前文档已完成全部轮次，如需重跑请先从历史记录回滚。");
       return;
     }
@@ -320,7 +372,7 @@ export function App({ service, pickerLabel }: Props) {
       setNotice("");
       setProgress(null);
       progressUnlistenRef.current?.();
-      const runToken = await service.startRunRound(documentStatus.sourcePath, modelConfig);
+      const runToken = await service.startRunRound(documentStatus.sourcePath, modelConfig, executionOptions);
       progressUnlistenRef.current = await service.listenRoundProgress((nextProgress) => {
         setProgress(nextProgress);
         setRuntimeStep(formatRuntimeStep(nextProgress, "处理中"));
@@ -331,17 +383,33 @@ export function App({ service, pickerLabel }: Props) {
           setNotice(nextProgress.message || "已按你的请求停止，当前进度已保留。");
         }
       }, runToken);
-      setRuntimeStep(`准备执行第 ${documentStatus.nextRound} 轮`);
-      setNotice(`本次运行将使用 ${describePromptProfile(modelConfig.promptProfile)}。`);
-      const result = await service.awaitRunRound(documentStatus.sourcePath, modelConfig, runToken);
+      const runLabel = executionOptions?.applyMode === "current_round_revision"
+        ? `准备生成第 ${executionOptions.targetRound} 轮修订版`
+        : executionOptions?.applyMode === "next_round_partial"
+          ? `准备执行第 ${executionOptions.targetRound} 轮局部处理`
+          : `准备执行第 ${documentStatus.nextRound} 轮`;
+      setRuntimeStep(runLabel);
+      const result = await service.awaitRunRound(documentStatus.sourcePath, modelConfig, runToken, executionOptions);
       progressUnlistenRef.current?.();
       progressUnlistenRef.current = null;
       setProgress(null);
-      setRuntimeStep(`第 ${result.round} 轮处理中，正在读取预览`);
       setRoundResult(result);
-      const preview = await service.readOutput(result.outputPath);
-      setPreviewText(preview.text);
-      setRuntimeStep(`第 ${result.round} 轮已完成，正在刷新历史`);
+      setPreviewText(result.paragraphs.map((paragraph) => paragraph.text).join("\n\n"));
+      setActivePreview({
+        label: result.revisionNumber ? `第 ${result.round} 轮 / 修订 ${result.revisionNumber}` : "当前最新结果",
+        round: result.round,
+        revisionNumber: result.revisionNumber ?? null,
+        outputPath: result.outputPath,
+        manifestPath: result.manifestPath,
+        kind: "current-result",
+        sourceRound: result.sourceRound ?? result.round,
+        preview: {
+          path: result.outputPath,
+          text: result.paragraphs.map((paragraph) => paragraph.text).join("\n\n"),
+          paragraphs: result.paragraphs,
+        },
+      });
+      clearPreviewSelection();
       const status = await refreshDocumentState(documentStatus.sourcePath);
       await refreshHistoryList();
       setCurrentPage("result");
@@ -349,13 +417,19 @@ export function App({ service, pickerLabel }: Props) {
       setRuntimeStep(
         status.hasNextRound && status.nextRound
           ? `第 ${result.round} 轮完成，下一步可执行第 ${status.nextRound} 轮`
-          : `第 ${result.round} 轮完成，全部轮次已结束`,
+          : `第 ${result.round} 轮完成，当前文档全部轮次已结束`,
       );
-      setNotice(
-        status.hasNextRound
-          ? `第 ${result.round} 轮已完成${result.resumed ? "，本次为断点续跑" : ""}，可以继续导出或进入下一轮。`
-          : `第 ${result.round} 轮已完成${result.resumed ? "，本次为断点续跑" : ""}，当前文档的全部轮次已结束，可以直接导出。`,
-      );
+      if (executionOptions?.applyMode === "current_round_revision") {
+        setNotice(`第 ${result.round} 轮修订版已生成，本次处理了 ${result.targetParagraphIndexes.length} 段。`);
+      } else if (executionOptions?.applyMode === "next_round_partial") {
+        setNotice(`第 ${result.round} 轮局部处理已完成，本次处理了 ${result.targetParagraphIndexes.length} 段。`);
+      } else {
+        setNotice(
+          status.hasNextRound
+            ? `第 ${result.round} 轮已完成${result.resumed ? "，本次为断点续跑" : ""}，可以继续导出或进入下一轮。`
+            : `第 ${result.round} 轮已完成${result.resumed ? "，本次为断点续跑" : ""}，当前文档的全部轮次已结束，可以直接导出。`,
+        );
+      }
     } catch (appError) {
       progressUnlistenRef.current?.();
       progressUnlistenRef.current = null;
@@ -370,9 +444,9 @@ export function App({ service, pickerLabel }: Props) {
       setError(pausedMessage ? pausedMessage : stoppedMessage ? "" : String(appError));
       setNotice(
         pausedMessage
-          ? `已暂停在第 ${latestStatus?.nextRound ?? documentStatus.nextRound} 轮，保留已完成进度，请处理后手动继续。`
+          ? `已暂停在第 ${latestStatus?.targetRound ?? latestStatus?.nextRound ?? documentStatus.nextRound} 轮，保留已完成进度，可随时继续。`
           : stoppedMessage
-            ? `已停止在第 ${latestStatus?.nextRound ?? documentStatus.nextRound} 轮，保留已完成进度，随时可以继续执行当前轮。`
+            ? `已停止在第 ${latestStatus?.targetRound ?? latestStatus?.nextRound ?? documentStatus.nextRound} 轮，保留已完成进度，可随时继续。`
             : "",
       );
       setRuntimeStep(
@@ -388,7 +462,11 @@ export function App({ service, pickerLabel }: Props) {
     }
   }
 
-  async function handleHistoryDownload(item: HistoryRound, targetFormat: "txt" | "docx") {
+  async function handleRunRound() {
+    await executeRound(null);
+  }
+
+  async function handleHistoryDownload(item: HistoryRound | HistoryRevision, targetFormat: "txt" | "docx") {
     if (!item.outputPath) {
       setNotice("当前历史记录没有可导出的输出路径。");
       return;
@@ -397,21 +475,49 @@ export function App({ service, pickerLabel }: Props) {
       setBusy(true);
       setError("");
       setNotice("");
-      setRuntimeStep(`正在导出第 ${item.round} 轮 ${targetFormat.toUpperCase()}`);
+      const label = item.kind === "revision"
+        ? `第 ${item.sourceRound ?? item.targetRound} 轮修订 ${item.revisionNumber}`
+        : `第 ${item.round} 轮`;
+      setRuntimeStep(`正在导出 ${label} ${targetFormat.toUpperCase()}`);
       const result = await service.exportRound(item.outputPath, targetFormat);
-      setNotice(`第 ${item.round} 轮已导出 ${result.format.toUpperCase()}：${result.path}`);
-      setRuntimeStep(`第 ${item.round} 轮导出完成`);
+      setNotice(`${label} 已导出 ${result.format.toUpperCase()}：${result.path}`);
+      setRuntimeStep(`${label} 导出完成`);
     } catch (appError) {
       setError(String(appError));
-      setRuntimeStep(`第 ${item.round} 轮导出失败`);
+      setRuntimeStep("导出失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handlePreviewHistoryVersion(item: HistoryRound | HistoryRevision) {
+    try {
+      setBusy(true);
+      setError("");
+      setNotice("");
+      setRuntimeStep("正在读取历史预览");
+      const preview = await service.readOutputPreview(item.outputPath, item.manifestPath);
+      const label = item.kind === "revision"
+        ? `历史预览：第 ${item.sourceRound ?? item.targetRound} 轮 / 修订 ${item.revisionNumber}`
+        : `历史预览：第 ${item.round} 轮`;
+      setActivePreview(buildActivePreviewFromVersion(label, item, preview));
+      setPreviewText(preview.text);
+      clearPreviewSelection();
+      setCurrentPage("result");
+      setNotice("已打开历史版本预览，可以按段落选择并继续处理。");
+      setRuntimeStep("历史预览已加载");
+    } catch (appError) {
+      setError(String(appError));
+      setRuntimeStep("读取历史预览失败");
     } finally {
       setBusy(false);
     }
   }
 
   async function handleExport(targetFormat: "txt" | "docx") {
-    if (!roundResult) {
-      setNotice("请先执行至少一轮处理，再导出结果。");
+    const exportPath = activePreview?.outputPath ?? roundResult?.outputPath;
+    if (!exportPath) {
+      setNotice("请先打开一个可导出的结果预览。");
       return;
     }
     try {
@@ -419,17 +525,61 @@ export function App({ service, pickerLabel }: Props) {
       setError("");
       setNotice("");
       setRuntimeStep(`正在导出 ${targetFormat.toUpperCase()}`);
-      const result = await service.exportRound(roundResult.outputPath, targetFormat);
+      const result = await service.exportRound(exportPath, targetFormat);
       setNotice(`已导出 ${result.format.toUpperCase()}：${result.path}`);
+      setRuntimeStep("导出完成");
     } catch (appError) {
       setError(String(appError));
       setRuntimeStep("导出失败");
     } finally {
-      if (!error) {
-        setRuntimeStep("导出完成");
-      }
       setBusy(false);
     }
+  }
+
+  function toggleParagraph(paragraphIndex: number) {
+    setSelectedParagraphIndexes(
+      selectedParagraphIndexes.includes(paragraphIndex)
+        ? selectedParagraphIndexes.filter((value) => value !== paragraphIndex)
+        : [...selectedParagraphIndexes, paragraphIndex].sort((left, right) => left - right),
+    );
+  }
+
+  function buildExecutionOptions(applyMode: ApplyMode): RunExecutionOptions | null {
+    if (!activePreview || !selectedParagraphIndexes.length) {
+      setNotice("请先选择至少一个段落。");
+      return null;
+    }
+    const sourceRound = activePreview.round;
+    const targetRound = applyMode === "current_round_revision" ? sourceRound : sourceRound + 1;
+    return {
+      applyMode,
+      targetParagraphIndexes: selectedParagraphIndexes,
+      sourceRound,
+      targetRound,
+      basedOnOutputPath: activePreview.outputPath,
+      basedOnManifestPath: activePreview.manifestPath,
+      revisionNumber: activePreview.revisionNumber,
+    };
+  }
+
+  async function handleCreateRevision() {
+    if (activePreview?.kind === "round" && activePreview.round === 0) {
+      setNotice("初始预览还没有当前轮结果，请使用“在下一轮处理所选段落”。");
+      return;
+    }
+    const options = buildExecutionOptions("current_round_revision");
+    if (!options) {
+      return;
+    }
+    await executeRound(options);
+  }
+
+  async function handleRunNextPartial() {
+    const options = buildExecutionOptions("next_round_partial");
+    if (!options) {
+      return;
+    }
+    await executeRound(options);
   }
 
   const activePage = PAGE_META.find((item) => item.key === currentPage) ?? PAGE_META[0];
@@ -439,7 +589,7 @@ export function App({ service, pickerLabel }: Props) {
       <div className="hero-panel">
         <div className="hero-copy-wrap">
           <p className="eyebrow">baibaiAIGC</p>
-          <h1>超级超级好用的降 AI 神器！</h1>
+          <h1>段落级 AIGC 文稿处理工作台</h1>
         </div>
         <div className="hero-status-column">
           <span className={`status-tag ${busy ? "" : "idle"}`}>
@@ -461,7 +611,7 @@ export function App({ service, pickerLabel }: Props) {
       </div>
 
       <nav className="page-switcher" aria-label="页面切换">
-        {PAGE_META.map((page, index) => (
+        {PAGE_META.map((page) => (
           <button
             key={page.key}
             type="button"
@@ -519,14 +669,23 @@ export function App({ service, pickerLabel }: Props) {
             onSelect={handleSelectHistory}
             onDelete={handleDeleteHistory}
             onDownload={handleHistoryDownload}
+            onPreview={handlePreviewHistoryVersion}
           />
         ) : null}
 
         {currentPage === "result" ? (
           <ResultCard
             result={roundResult}
-            previewText={previewText}
+            activePreview={activePreview}
+            selectedParagraphIndexes={selectedParagraphIndexes}
             busy={busy}
+            onToggleParagraph={toggleParagraph}
+            onSelectAllParagraphs={() => {
+              setSelectedParagraphIndexes(activePreview?.preview.paragraphs.map((paragraph) => paragraph.paragraphIndex) ?? []);
+            }}
+            onClearParagraphs={clearPreviewSelection}
+            onCreateRevision={handleCreateRevision}
+            onRunNextPartial={handleRunNextPartial}
             onExportTxt={() => handleExport("txt")}
             onExportDocx={() => handleExport("docx")}
           />

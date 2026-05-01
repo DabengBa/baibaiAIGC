@@ -1,4 +1,4 @@
-import type { DocumentHistory, HistoryDocumentSummary, HistoryRound } from "../types/app";
+import type { DocumentHistory, HistoryDocumentSummary, HistoryRevision, HistoryRound } from "../types/app";
 
 type Props = {
   currentDocId: string | null;
@@ -10,7 +10,8 @@ type Props = {
   onToggle: () => void;
   onSelect: (item: HistoryDocumentSummary) => void;
   onDelete: (docId: string, fromRound?: number) => void;
-  onDownload: (item: HistoryRound, format: "txt" | "docx") => void;
+  onDownload: (item: HistoryRound | HistoryRevision, format: "txt" | "docx") => void;
+  onPreview: (item: HistoryRound | HistoryRevision) => void;
 };
 
 function formatTimestamp(value: string): string {
@@ -47,6 +48,27 @@ function formatNextRound(completedRounds: number[]): string {
   return String(Math.max(...filtered) + 1);
 }
 
+function renderVersionActions(
+  item: HistoryRound | HistoryRevision,
+  busy: boolean,
+  onDownload: (item: HistoryRound | HistoryRevision, format: "txt" | "docx") => void,
+  onPreview: (item: HistoryRound | HistoryRevision) => void,
+) {
+  return (
+    <div className="button-row">
+      <button className="secondary-button" onClick={() => onPreview(item)} disabled={busy || !item.outputPath || !item.manifestPath}>
+        预览并选择
+      </button>
+      <button className="secondary-button" onClick={() => onDownload(item, "txt")} disabled={busy || !item.outputPath}>
+        下载 TXT
+      </button>
+      <button className="primary-button" onClick={() => onDownload(item, "docx")} disabled={busy || !item.outputPath}>
+        下载 Word
+      </button>
+    </div>
+  );
+}
+
 export function HistoryCard({
   currentDocId,
   currentHistory,
@@ -58,13 +80,14 @@ export function HistoryCard({
   onSelect,
   onDelete,
   onDownload,
+  onPreview,
 }: Props) {
   return (
     <section className={`${embedded ? "section-stack history-card history-card-embedded" : "glass-card section-stack history-card"}`}>
       <div className="section-header">
         <div>
           <h2>历史记录</h2>
-          <p>显示已处理过的文档，可切换、回滚或删除。</p>
+          <p>显示已处理的文档、轮次结果与修订版，并支持重新打开预览选择段落。</p>
         </div>
         <button className="secondary-button history-toggle" onClick={onToggle} disabled={busy}>
           {open ? "收起历史记录" : `查看历史记录${items.length ? ` (${items.length})` : ""}`}
@@ -87,7 +110,7 @@ export function HistoryCard({
                       <span className="pill">已完成 {item.completedRounds.length} 轮</span>
                     </div>
                     <div className="history-metrics">
-                      <span>当前文档 {isActive ? "已载入" : "未载入"}</span>
+                      <span>当前文档 {isActive ? "已加载" : "未加载"}</span>
                       <span>下一轮 {formatNextRound(item.completedRounds)}</span>
                     </div>
                     <div className="path-box compact-box">
@@ -96,7 +119,7 @@ export function HistoryCard({
                     </div>
                     <div className="button-row history-document-actions">
                       <button className="secondary-button" onClick={() => onSelect(item)} disabled={busy}>
-                        {isActive ? "重新载入" : "切换到此文档"}
+                        {isActive ? "重新加载" : "切换到此文档"}
                       </button>
                       <button className="secondary-button danger-button" onClick={() => onDelete(item.docId)} disabled={busy}>
                         删除整条历史
@@ -113,27 +136,14 @@ export function HistoryCard({
                             <div className="history-metrics">
                               <span>输入块数 {roundItem.inputSegmentCount ?? "-"}</span>
                               <span>输出块数 {roundItem.outputSegmentCount ?? "-"}</span>
-                              <span>切块上限 {roundItem.chunkLimit ?? "-"}</span>
+                              <span>修订版 {roundItem.revisions.length}</span>
                             </div>
                             <div className="path-box compact-box">
                               <span>输出路径</span>
                               <strong>{roundItem.outputPath || "暂无"}</strong>
                             </div>
+                            {renderVersionActions(roundItem, busy, onDownload, onPreview)}
                             <div className="button-row">
-                              <button
-                                className="secondary-button"
-                                onClick={() => onDownload(roundItem, "txt")}
-                                disabled={busy || !roundItem.outputPath}
-                              >
-                                下载 TXT
-                              </button>
-                              <button
-                                className="primary-button"
-                                onClick={() => onDownload(roundItem, "docx")}
-                                disabled={busy || !roundItem.outputPath}
-                              >
-                                下载 Word
-                              </button>
                               <button
                                 className="secondary-button danger-button"
                                 onClick={() => onDelete(item.docId, roundItem.round)}
@@ -142,6 +152,31 @@ export function HistoryCard({
                                 从本轮重新跑
                               </button>
                             </div>
+                            {roundItem.revisions.length ? (
+                              <div className="history-revision-list">
+                                {roundItem.revisions.map((revision) => (
+                                  <article
+                                    key={`${item.docId}-${roundItem.round}-rev-${revision.revisionNumber}`}
+                                    className="history-item history-revision-item"
+                                  >
+                                    <div className="history-item-head">
+                                      <strong>第 {roundItem.round} 轮 / 修订 {revision.revisionNumber}</strong>
+                                      <span>{formatTimestamp(revision.timestamp)}</span>
+                                    </div>
+                                    <div className="history-metrics">
+                                      <span>输入块数 {revision.inputSegmentCount ?? "-"}</span>
+                                      <span>输出块数 {revision.outputSegmentCount ?? "-"}</span>
+                                      <span>已选段落 {revision.targetParagraphIndexes.length}</span>
+                                    </div>
+                                    <div className="path-box compact-box">
+                                      <span>输出路径</span>
+                                      <strong>{revision.outputPath || "暂无"}</strong>
+                                    </div>
+                                    {renderVersionActions(revision, busy, onDownload, onPreview)}
+                                  </article>
+                                ))}
+                              </div>
+                            ) : null}
                           </article>
                         ))}
                       </div>

@@ -1,6 +1,25 @@
 import { create } from "zustand";
 import { DEFAULT_MODEL_CONFIG } from "../types/app";
-import type { DocumentHistory, DocumentStatus, HistoryDocumentSummary, ModelConfig, RoundProgress, RoundResult } from "../types/app";
+import type {
+  DocumentHistory,
+  DocumentStatus,
+  HistoryDocumentSummary,
+  ModelConfig,
+  OutputPreview,
+  RoundProgress,
+  RoundResult,
+} from "../types/app";
+
+export type ActivePreview = {
+  label: string;
+  round: number;
+  revisionNumber: number | null;
+  outputPath: string;
+  manifestPath: string;
+  kind: "round" | "revision" | "current-result";
+  sourceRound: number;
+  preview: OutputPreview;
+};
 
 type AppState = {
   modelConfig: ModelConfig;
@@ -11,6 +30,8 @@ type AppState = {
   roundResult: RoundResult | null;
   progress: RoundProgress | null;
   previewText: string;
+  activePreview: ActivePreview | null;
+  selectedParagraphIndexes: number[];
   runtimeStep: string;
   notice: string;
   busy: boolean;
@@ -23,6 +44,8 @@ type AppState = {
   setRoundResult: (result: RoundResult | null) => void;
   setProgress: (progress: RoundProgress | null) => void;
   setPreviewText: (text: string) => void;
+  setActivePreview: (preview: ActivePreview | null) => void;
+  setSelectedParagraphIndexes: (indexes: number[]) => void;
   setRuntimeStep: (text: string) => void;
   setNotice: (notice: string) => void;
   setBusy: (busy: boolean) => void;
@@ -38,6 +61,8 @@ export const useAppState = create<AppState>((set) => ({
   roundResult: null,
   progress: null,
   previewText: "",
+  activePreview: null,
+  selectedParagraphIndexes: [],
   runtimeStep: "待命",
   notice: "",
   busy: false,
@@ -50,6 +75,8 @@ export const useAppState = create<AppState>((set) => ({
   setRoundResult: (roundResult) => set({ roundResult }),
   setProgress: (progress) => set({ progress }),
   setPreviewText: (previewText) => set({ previewText }),
+  setActivePreview: (activePreview) => set({ activePreview }),
+  setSelectedParagraphIndexes: (selectedParagraphIndexes) => set({ selectedParagraphIndexes }),
   setRuntimeStep: (runtimeStep) => set({ runtimeStep }),
   setNotice: (notice) => set({ notice }),
   setBusy: (busy) => set({ busy }),

@@ -61,6 +61,28 @@ export type RoundProgress = {
   resumed?: boolean;
   error?: string;
   message?: string;
+  applyMode?: ApplyMode | "";
+  targetParagraphIndexes?: number[];
+  revisionNumber?: number;
+};
+
+export type ApplyMode = "current_round_revision" | "next_round_partial";
+
+export type ParagraphPreview = {
+  paragraphIndex: number;
+  text: string;
+  chunkIds: string[];
+  chunkCount: number;
+};
+
+export type RunExecutionOptions = {
+  applyMode: ApplyMode;
+  targetParagraphIndexes: number[];
+  sourceRound: number;
+  targetRound: number;
+  basedOnOutputPath: string;
+  basedOnManifestPath: string;
+  revisionNumber?: number | null;
 };
 
 export type TestConnectionResult = {
@@ -95,6 +117,13 @@ export type DocumentStatus = {
   stopReason: string;
   latestOutputPath: string;
   extractedFromDocx: boolean;
+  applyMode: ApplyMode | "";
+  targetParagraphIndexes: number[];
+  sourceRound: number | null;
+  targetRound: number | null;
+  revisionNumber: number | null;
+  basedOnOutputPath: string;
+  basedOnManifestPath: string;
 };
 
 export type RoundResult = {
@@ -109,6 +138,13 @@ export type RoundResult = {
   paragraphCount: number;
   resumed: boolean;
   offlineMode: boolean;
+  paragraphs: ParagraphPreview[];
+  isPartial: boolean;
+  targetParagraphIndexes: number[];
+  applyMode: ApplyMode | "";
+  sourceRound?: number | null;
+  targetRound?: number | null;
+  revisionNumber?: number | null;
   docEntry: Record<string, unknown>;
   skillContext: Record<string, unknown>;
 };
@@ -132,6 +168,43 @@ export type HistoryRound = {
   inputSegmentCount: number | null;
   outputSegmentCount: number | null;
   timestamp: string;
+  kind: "round";
+  isPartial: boolean;
+  targetParagraphIndexes: number[];
+  basedOnOutputPath: string;
+  basedOnManifestPath: string;
+  sourceRound: number | null;
+  targetRound: number | null;
+  revisionNumber: number | null;
+  revisions: HistoryRevision[];
+};
+
+export type HistoryRevision = {
+  revisionNumber: number;
+  prompt: string;
+  inputPath: string;
+  outputPath: string;
+  manifestPath: string;
+  progressPath: string;
+  progressStatus: string;
+  completedChunkCount: number;
+  totalChunkCount: number;
+  lastError: string;
+  lastErrorChunkId: string;
+  stopRequested: boolean;
+  stopReason: string;
+  scoreTotal: number | null;
+  chunkLimit: number | null;
+  inputSegmentCount: number | null;
+  outputSegmentCount: number | null;
+  timestamp: string;
+  kind: "revision";
+  isPartial: boolean;
+  targetParagraphIndexes: number[];
+  basedOnOutputPath: string;
+  basedOnManifestPath: string;
+  sourceRound: number | null;
+  targetRound: number | null;
 };
 
 export type DocumentHistory = {
@@ -166,4 +239,10 @@ export type DeleteHistoryResult = {
 export type ExportResult = {
   format: "txt" | "docx";
   path: string;
+};
+
+export type OutputPreview = {
+  path: string;
+  text: string;
+  paragraphs: ParagraphPreview[];
 };

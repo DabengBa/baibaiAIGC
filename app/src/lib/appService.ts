@@ -5,8 +5,10 @@ import type {
   ExportResult,
   HistoryListResponse,
   ModelConfig,
+  OutputPreview,
   RoundProgress,
   RoundResult,
+  RunExecutionOptions,
   TestConnectionResult,
 } from "../types/app";
 
@@ -25,9 +27,11 @@ export interface AppService {
   listDocumentHistories(): Promise<HistoryListResponse>;
   deleteDocumentHistory(docId: string, fromRound?: number): Promise<DeleteHistoryResult>;
   requestStop(sourcePath: string, modelConfig: ModelConfig, runToken?: string | null): Promise<DocumentStatus>;
-  startRunRound(sourcePath: string, modelConfig: ModelConfig): Promise<string | null>;
-  awaitRunRound(sourcePath: string, modelConfig: ModelConfig, runToken?: string | null): Promise<RoundResult>;
+  startRunRound(sourcePath: string, modelConfig: ModelConfig, executionOptions?: RunExecutionOptions | null): Promise<string | null>;
+  awaitRunRound(sourcePath: string, modelConfig: ModelConfig, runToken?: string | null, executionOptions?: RunExecutionOptions | null): Promise<RoundResult>;
   listenRoundProgress(onProgress: (payload: RoundProgress) => void, runToken?: string | null): Promise<() => void>;
   readOutput(outputPath: string): Promise<{ path: string; text: string }>;
+  readOutputPreview(outputPath: string, manifestPath: string): Promise<OutputPreview>;
+  readSourcePreview(inputPath: string, manifestPath: string, promptProfile: "cn" | "en"): Promise<OutputPreview>;
   exportRound(outputPath: string, targetFormat: "txt" | "docx"): Promise<ExportResult>;
 }

@@ -19,6 +19,8 @@ from app_service import (
     get_document_status,
     list_document_histories,
     read_output_text,
+    read_output_preview,
+    read_source_preview,
     request_stop_for_app,
     run_round_for_app,
     test_model_connection,
@@ -79,6 +81,13 @@ def require_managed_source_path(path_value: str) -> str:
     return str(normalized_path)
 
 
+def require_managed_preview_input_path(path_value: str) -> str:
+    normalized_path = normalize_path(Path(path_value))
+    if _is_within(normalized_path, ORIGIN_DIR) or _is_within(normalized_path, FINISH_DIR):
+        return str(normalized_path)
+    raise ValueError("inputPath must stay within the managed origin or finish directory.")
+
+
 def require_managed_output_path(path_value: str) -> str:
     normalized_path = normalize_path(Path(path_value))
     if not _is_within(normalized_path, FINISH_DIR):
@@ -122,12 +131,17 @@ def finalize_progress(run_id: str, *, result: dict[str, Any] | None = None, erro
         state.condition.notify_all()
 
 
-def run_round_async(run_id: str, source_path: str, model_config: dict[str, Any]) -> None:
+def run_round_async(run_id: str, source_path: str, model_config: dict[str, Any], execution_options: dict[str, Any] | None) -> None:
     try:
         def capture_progress(event: dict[str, Any]) -> None:
             append_progress_event(run_id, event)
 
-        result = run_round_for_app(source_path, model_config, progress_callback=capture_progress)
+        result = run_round_for_app(
+            source_path,
+            model_config,
+            progress_callback=capture_progress,
+            execution_options=execution_options,
+        )
         finalize_progress(run_id, result=result)
     except Exception as exc:
         finalize_progress(run_id, error=str(exc))
@@ -256,19 +270,43 @@ def get_read_output() -> tuple[Response, int] | Response:
         return error_response(str(exc))
 
 
+@app.route("/api/read-output-preview", methods=["GET"])
+def get_read_output_preview() -> tuple[Response, int] | Response:
+    try:
+        output_path = require_managed_output_path(require_query_value("outputPath"))
+        manifest_path = require_managed_output_path(require_query_value("manifestPath"))
+        return jsonify(read_output_preview(output_path, manifest_path))
+    except Exception as exc:
+        return error_response(str(exc))
+
+
+@app.route("/api/read-source-preview", methods=["GET"])
+def get_read_source_preview() -> tuple[Response, int] | Response:
+    try:
+        input_path = require_managed_preview_input_path(require_query_value("inputPath"))
+        manifest_path = require_managed_output_path(require_query_value("manifestPath"))
+        prompt_profile = request.args.get("promptProfile", "cn")
+        return jsonify(read_source_preview(input_path, manifest_path, prompt_profile))
+    except Exception as exc:
+        return error_response(str(exc))
+
+
 @app.route("/api/run-round", methods=["POST"])
 def post_run_round() -> tuple[Response, int] | Response:
     try:
         payload = request.get_json(silent=True) or {}
         source_path = require_managed_source_path(str(payload.get("sourcePath", "")).strip())
         model_config = payload.get("modelConfig")
+        execution_options = payload.get("executionOptions")
         if not isinstance(model_config, dict):
             raise ValueError("modelConfig is required.")
+        if execution_options is not None and not isinstance(execution_options, dict):
+            raise ValueError("executionOptions must be an object when provided.")
         run_id = uuid.uuid4().hex
         RUN_STATES[run_id] = ProgressState()
         worker = threading.Thread(
             target=run_round_async,
-            args=(run_id, source_path, model_config),
+            args=(run_id, source_path, model_config, execution_options),
             daemon=True,
         )
         worker.start()

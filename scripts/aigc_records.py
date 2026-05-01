@@ -59,6 +59,32 @@ RECORDS_PATH = FINISH_DIR / "aigc_records.json"
 
 
 @dataclass
+class RevisionRecord:
+    revision_number: int
+    prompt: str
+    input_path: str
+    output_path: str
+    prompt_profile: str = "cn"
+    score_total: Optional[int] = None
+    chunk_limit: Optional[int] = None
+    input_segment_count: Optional[int] = None
+    output_segment_count: Optional[int] = None
+    manifest_path: Optional[str] = None
+    kind: str = "revision"
+    is_partial: bool = True
+    target_paragraph_indexes: Optional[List[int]] = None
+    based_on_output_path: Optional[str] = None
+    based_on_manifest_path: Optional[str] = None
+    source_round: Optional[int] = None
+    target_round: Optional[int] = None
+    timestamp: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        data: Dict[str, Any] = asdict(self)
+        return _prune_record_dict(data)
+
+
+@dataclass
 class RoundRecord:
     """Single reduction round metadata for one document."""
 
@@ -72,16 +98,56 @@ class RoundRecord:
     input_segment_count: Optional[int] = None
     output_segment_count: Optional[int] = None
     manifest_path: Optional[str] = None
+    kind: str = "round"
+    is_partial: bool = False
+    target_paragraph_indexes: Optional[List[int]] = None
+    based_on_output_path: Optional[str] = None
+    based_on_manifest_path: Optional[str] = None
+    source_round: Optional[int] = None
+    target_round: Optional[int] = None
+    revisions: Optional[List[Dict[str, Any]]] = None
     timestamp: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         data: Dict[str, Any] = asdict(self)
-        # Drop empty timestamp / None score to keep JSON clean.
-        if not data.get("timestamp"):
-            data.pop("timestamp", None)
-        if data.get("score_total") is None:
-            data.pop("score_total", None)
-        return data
+        return _prune_record_dict(data)
+
+
+def _normalize_paragraph_indexes(value: Any) -> Optional[List[int]]:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        return None
+    indexes = sorted({int(item) for item in value if isinstance(item, int) or (isinstance(item, str) and item.isdigit())})
+    return indexes
+
+
+def _prune_record_dict(data: Dict[str, Any]) -> Dict[str, Any]:
+    cleaned = dict(data)
+    if not cleaned.get("timestamp"):
+        cleaned.pop("timestamp", None)
+    for key in (
+        "score_total",
+        "chunk_limit",
+        "input_segment_count",
+        "output_segment_count",
+        "manifest_path",
+        "target_paragraph_indexes",
+        "based_on_output_path",
+        "based_on_manifest_path",
+        "source_round",
+        "target_round",
+        "revisions",
+    ):
+        if cleaned.get(key) is None:
+            cleaned.pop(key, None)
+    if cleaned.get("kind") == "round":
+        cleaned.pop("kind", None)
+    if cleaned.get("is_partial") is False:
+        cleaned.pop("is_partial", None)
+    if not cleaned.get("revisions"):
+        cleaned.pop("revisions", None)
+    return cleaned
 
 
 def _ensure_finish_dir() -> None:
@@ -171,8 +237,48 @@ def normalize_records(records: Dict[str, Any]) -> Dict[str, Any]:
                 value = normalized_item.get(field)
                 if isinstance(value, str):
                     normalized_item[field] = normalize_record_path(value)
+            for field in ("based_on_output_path", "based_on_manifest_path"):
+                value = normalized_item.get(field)
+                if isinstance(value, str):
+                    normalized_item[field] = normalize_record_path(value)
             prompt_profile = str(normalized_item.get("prompt_profile", "cn") or "cn").strip().lower()
             normalized_item["prompt_profile"] = prompt_profile if prompt_profile in {"cn", "en"} else "cn"
+            normalized_item["kind"] = "round"
+            normalized_item["is_partial"] = bool(normalized_item.get("is_partial"))
+            normalized_item["target_paragraph_indexes"] = _normalize_paragraph_indexes(
+                normalized_item.get("target_paragraph_indexes"),
+            )
+            revisions = normalized_item.get("revisions")
+            normalized_revisions: List[Dict[str, Any]] = []
+            if isinstance(revisions, list):
+                for revision in revisions:
+                    if not isinstance(revision, dict):
+                        continue
+                    revision_number = revision.get("revision_number")
+                    if not isinstance(revision_number, int):
+                        continue
+                    normalized_revision = dict(revision)
+                    for field in ("prompt", "input_path", "output_path", "manifest_path"):
+                        value = normalized_revision.get(field)
+                        if isinstance(value, str):
+                            normalized_revision[field] = normalize_record_path(value)
+                    for field in ("based_on_output_path", "based_on_manifest_path"):
+                        value = normalized_revision.get(field)
+                        if isinstance(value, str):
+                            normalized_revision[field] = normalize_record_path(value)
+                    revision_prompt_profile = str(normalized_revision.get("prompt_profile", prompt_profile) or prompt_profile).strip().lower()
+                    normalized_revision["prompt_profile"] = revision_prompt_profile if revision_prompt_profile in {"cn", "en"} else "cn"
+                    normalized_revision["kind"] = "revision"
+                    normalized_revision["is_partial"] = bool(normalized_revision.get("is_partial", True))
+                    normalized_revision["target_paragraph_indexes"] = _normalize_paragraph_indexes(
+                        normalized_revision.get("target_paragraph_indexes"),
+                    )
+                    normalized_revisions.append(normalized_revision)
+            if normalized_revisions:
+                normalized_revisions.sort(key=lambda revision: revision.get("revision_number", 0))
+                normalized_item["revisions"] = normalized_revisions
+            elif "revisions" in normalized_item:
+                normalized_item.pop("revisions", None)
             merged_by_round[round_number] = normalized_item
 
         target_entry["origin_path"] = normalize_record_path(str(raw_entry.get("origin_path", normalized_key))) or normalized_key
@@ -211,6 +317,9 @@ def _collect_round_file_paths(rounds: List[Dict[str, Any]]) -> set[Path]:
             absolute = _record_path_to_absolute(value)
             if absolute is not None:
                 collected.add(absolute)
+        revisions = item.get("revisions")
+        if isinstance(revisions, list):
+            collected.update(_collect_round_file_paths([revision for revision in revisions if isinstance(revision, dict)]))
     return collected
 
 
@@ -266,6 +375,12 @@ def update_round(
     input_segment_count: Optional[int] = None,
     output_segment_count: Optional[int] = None,
     manifest_path: Optional[str] = None,
+    is_partial: bool = False,
+    target_paragraph_indexes: Optional[List[int]] = None,
+    based_on_output_path: Optional[str] = None,
+    based_on_manifest_path: Optional[str] = None,
+    source_round: Optional[int] = None,
+    target_round: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Update (or create) the record for a single document round.
 
@@ -286,10 +401,16 @@ def update_round(
     if not isinstance(rounds, list):
         rounds = []
 
-    # Remove any existing entry for this round, to make updates idempotent.
-    filtered_rounds: List[Dict[str, Any]] = [
-        r for r in rounds if not isinstance(r, dict) or r.get("round") != round_number
-    ]
+    existing_round = next(
+        (
+            round_item for round_item in rounds
+            if isinstance(round_item, dict) and round_item.get("round") == round_number
+        ),
+        None,
+    )
+    existing_revisions = existing_round.get("revisions") if isinstance(existing_round, dict) else None
+
+    filtered_rounds: List[Dict[str, Any]] = [r for r in rounds if not isinstance(r, dict) or r.get("round") != round_number]
 
     record = RoundRecord(
         round=round_number,
@@ -302,6 +423,13 @@ def update_round(
         input_segment_count=input_segment_count,
         output_segment_count=output_segment_count,
         manifest_path=normalize_record_path(manifest_path) if manifest_path else None,
+        is_partial=is_partial,
+        target_paragraph_indexes=_normalize_paragraph_indexes(target_paragraph_indexes),
+        based_on_output_path=normalize_record_path(based_on_output_path) if based_on_output_path else None,
+        based_on_manifest_path=normalize_record_path(based_on_manifest_path) if based_on_manifest_path else None,
+        source_round=source_round,
+        target_round=target_round,
+        revisions=[revision for revision in existing_revisions if isinstance(revision, dict)] if isinstance(existing_revisions, list) else None,
         timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     )
 
@@ -315,6 +443,102 @@ def update_round(
 
     save_records(records)
     return doc_entry
+
+
+def update_revision(
+    doc_id: str,
+    round_number: int,
+    revision_number: int,
+    prompt: str,
+    prompt_profile: str,
+    input_path: str,
+    output_path: str,
+    score_total: Optional[int] = None,
+    chunk_limit: Optional[int] = None,
+    input_segment_count: Optional[int] = None,
+    output_segment_count: Optional[int] = None,
+    manifest_path: Optional[str] = None,
+    target_paragraph_indexes: Optional[List[int]] = None,
+    based_on_output_path: Optional[str] = None,
+    based_on_manifest_path: Optional[str] = None,
+    source_round: Optional[int] = None,
+    target_round: Optional[int] = None,
+) -> Dict[str, Any]:
+    normalized_doc_id = normalize_doc_id(doc_id)
+    records = load_records_normalized()
+    doc_entry = records.get(normalized_doc_id)
+    if not isinstance(doc_entry, dict):
+        raise ValueError(f"Document record not found: {normalized_doc_id}")
+
+    rounds = doc_entry.get("rounds")
+    if not isinstance(rounds, list):
+        rounds = []
+
+    round_entry = next(
+        (
+            item for item in rounds
+            if isinstance(item, dict) and item.get("round") == round_number
+        ),
+        None,
+    )
+    if not isinstance(round_entry, dict):
+        raise ValueError(f"Round {round_number} not found for document: {normalized_doc_id}")
+
+    revisions = round_entry.get("revisions")
+    if not isinstance(revisions, list):
+        revisions = []
+
+    filtered_revisions = [
+        revision for revision in revisions
+        if not isinstance(revision, dict) or revision.get("revision_number") != revision_number
+    ]
+
+    record = RevisionRecord(
+        revision_number=revision_number,
+        prompt=normalize_record_path(prompt),
+        prompt_profile=str(prompt_profile or "cn").strip().lower() or "cn",
+        input_path=normalize_record_path(input_path),
+        output_path=normalize_record_path(output_path),
+        score_total=score_total,
+        chunk_limit=chunk_limit,
+        input_segment_count=input_segment_count,
+        output_segment_count=output_segment_count,
+        manifest_path=normalize_record_path(manifest_path) if manifest_path else None,
+        is_partial=True,
+        target_paragraph_indexes=_normalize_paragraph_indexes(target_paragraph_indexes),
+        based_on_output_path=normalize_record_path(based_on_output_path) if based_on_output_path else None,
+        based_on_manifest_path=normalize_record_path(based_on_manifest_path) if based_on_manifest_path else None,
+        source_round=source_round,
+        target_round=target_round,
+        timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    )
+
+    filtered_revisions.append(record.to_dict())
+    filtered_revisions.sort(key=lambda revision: revision.get("revision_number", 0))
+    round_entry["revisions"] = filtered_revisions
+    save_records(records)
+    return doc_entry
+
+
+def get_round_record(doc_id: str, round_number: int, prompt_profile: str = "cn") -> Optional[Dict[str, Any]]:
+    normalized_doc_id = normalize_doc_id(doc_id)
+    normalized_profile = str(prompt_profile or "cn").strip().lower() or "cn"
+    records = load_records_normalized()
+    doc_entry = records.get(normalized_doc_id)
+    if not isinstance(doc_entry, dict):
+        return None
+    rounds = doc_entry.get("rounds")
+    if not isinstance(rounds, list):
+        return None
+    return next(
+        (
+            item for item in rounds
+            if isinstance(item, dict)
+            and item.get("round") == round_number
+            and str(item.get("prompt_profile", "cn") or "cn").strip().lower() == normalized_profile
+        ),
+        None,
+    )
 
 
 def list_records() -> Dict[str, Any]:

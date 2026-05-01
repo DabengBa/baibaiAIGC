@@ -313,6 +313,13 @@ def _default_progress_payload(
     output_path: Path,
     manifest_path: Path,
     prompt_profile: str,
+    apply_mode: str | None = None,
+    source_round: int | None = None,
+    target_round: int | None = None,
+    revision_number: int | None = None,
+    target_paragraph_indexes: list[int] | None = None,
+    based_on_output_path: str | None = None,
+    based_on_manifest_path: str | None = None,
 ) -> dict[str, object]:
     return {
         "version": 1,
@@ -329,6 +336,13 @@ def _default_progress_payload(
         "stop_requested": False,
         "stop_reason": "",
         "chunk_outputs": {},
+        "apply_mode": apply_mode or "",
+        "source_round": source_round,
+        "target_round": target_round if target_round is not None else round_number,
+        "revision_number": revision_number,
+        "target_paragraph_indexes": target_paragraph_indexes or [],
+        "based_on_output_path": based_on_output_path or "",
+        "based_on_manifest_path": based_on_manifest_path or "",
     }
 
 
@@ -341,6 +355,13 @@ def _load_progress_payload(
     output_path: Path,
     manifest_path: Path,
     prompt_profile: str,
+    apply_mode: str | None = None,
+    source_round: int | None = None,
+    target_round: int | None = None,
+    revision_number: int | None = None,
+    target_paragraph_indexes: list[int] | None = None,
+    based_on_output_path: str | None = None,
+    based_on_manifest_path: str | None = None,
 ) -> dict[str, object]:
     if not progress_path.exists():
         return _default_progress_payload(
@@ -350,6 +371,13 @@ def _load_progress_payload(
             output_path=output_path,
             manifest_path=manifest_path,
             prompt_profile=prompt_profile,
+            apply_mode=apply_mode,
+            source_round=source_round,
+            target_round=target_round,
+            revision_number=revision_number,
+            target_paragraph_indexes=target_paragraph_indexes,
+            based_on_output_path=based_on_output_path,
+            based_on_manifest_path=based_on_manifest_path,
         )
 
     data = json.loads(progress_path.read_text(encoding="utf-8"))
@@ -361,6 +389,13 @@ def _load_progress_payload(
             output_path=output_path,
             manifest_path=manifest_path,
             prompt_profile=prompt_profile,
+            apply_mode=apply_mode,
+            source_round=source_round,
+            target_round=target_round,
+            revision_number=revision_number,
+            target_paragraph_indexes=target_paragraph_indexes,
+            based_on_output_path=based_on_output_path,
+            based_on_manifest_path=based_on_manifest_path,
         )
 
     chunk_ids = {chunk.chunk_id for chunk in manifest.chunks}
@@ -381,6 +416,13 @@ def _load_progress_payload(
         output_path=output_path,
         manifest_path=manifest_path,
         prompt_profile=prompt_profile,
+        apply_mode=apply_mode,
+        source_round=source_round,
+        target_round=target_round,
+        revision_number=revision_number,
+        target_paragraph_indexes=target_paragraph_indexes,
+        based_on_output_path=based_on_output_path,
+        based_on_manifest_path=based_on_manifest_path,
     )
     payload.update(
         {
@@ -392,6 +434,13 @@ def _load_progress_payload(
             "stop_reason": str(data.get("stop_reason", "") or ""),
             "chunk_outputs": chunk_outputs,
             "completed_chunks": len(chunk_outputs),
+            "apply_mode": str(data.get("apply_mode", apply_mode or "") or ""),
+            "source_round": data.get("source_round", source_round),
+            "target_round": data.get("target_round", target_round if target_round is not None else round_number),
+            "revision_number": data.get("revision_number", revision_number),
+            "target_paragraph_indexes": data.get("target_paragraph_indexes", target_paragraph_indexes or []),
+            "based_on_output_path": str(data.get("based_on_output_path", based_on_output_path or "") or ""),
+            "based_on_manifest_path": str(data.get("based_on_manifest_path", based_on_manifest_path or "") or ""),
         }
     )
     return payload
@@ -400,6 +449,56 @@ def _load_progress_payload(
 def _save_progress_payload(progress_path: Path, payload: dict[str, object]) -> None:
     progress_path.parent.mkdir(parents=True, exist_ok=True)
     progress_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _normalize_target_paragraph_indexes(
+    target_paragraph_indexes: list[int] | None,
+    paragraph_count: int,
+) -> list[int]:
+    if target_paragraph_indexes is None:
+        return []
+    normalized = sorted({int(index) for index in target_paragraph_indexes})
+    if not normalized:
+        raise ValueError("target_paragraph_indexes must contain at least one paragraph index.")
+    invalid = [index for index in normalized if index < 0 or index >= paragraph_count]
+    if invalid:
+        raise ValueError(f"target_paragraph_indexes out of range: {invalid}")
+    return normalized
+
+
+def _validate_saved_selection_context(
+    progress_payload: dict[str, object],
+    *,
+    apply_mode: str | None,
+    source_round: int | None,
+    target_round: int | None,
+    revision_number: int | None,
+    target_paragraph_indexes: list[int],
+    based_on_output_path: str | None,
+    based_on_manifest_path: str | None,
+) -> None:
+    saved_apply_mode = str(progress_payload.get("apply_mode", "") or "")
+    saved_targets = [int(index) for index in progress_payload.get("target_paragraph_indexes", []) if isinstance(index, int)]
+    saved_source_round = progress_payload.get("source_round")
+    saved_target_round = progress_payload.get("target_round")
+    saved_revision_number = progress_payload.get("revision_number")
+    saved_output_path = str(progress_payload.get("based_on_output_path", "") or "")
+    saved_manifest_path = str(progress_payload.get("based_on_manifest_path", "") or "")
+
+    if saved_apply_mode and apply_mode and saved_apply_mode != apply_mode:
+        raise ValueError("Existing progress belongs to a different apply mode.")
+    if saved_targets and saved_targets != target_paragraph_indexes:
+        raise ValueError("Existing progress belongs to a different paragraph selection.")
+    if isinstance(saved_source_round, int) and source_round is not None and saved_source_round != source_round:
+        raise ValueError("Existing progress belongs to a different source round.")
+    if isinstance(saved_target_round, int) and target_round is not None and saved_target_round != target_round:
+        raise ValueError("Existing progress belongs to a different target round.")
+    if isinstance(saved_revision_number, int) and revision_number is not None and saved_revision_number != revision_number:
+        raise ValueError("Existing progress belongs to a different revision.")
+    if saved_output_path and based_on_output_path and normalize_path(Path(saved_output_path)) != normalize_path(Path(based_on_output_path)):
+        raise ValueError("Existing progress belongs to a different source output.")
+    if saved_manifest_path and based_on_manifest_path and normalize_path(Path(saved_manifest_path)) != normalize_path(Path(based_on_manifest_path)):
+        raise ValueError("Existing progress belongs to a different source manifest.")
 
 
 def request_stop(progress_path: Path, *, reason: str = "用户手动停止，保留当前进度，可继续执行当前轮。") -> dict[str, object]:
@@ -493,6 +592,13 @@ def run_round(
     chunk_limit: int = DEFAULT_CHUNK_LIMIT,
     score_total: int | None = None,
     progress_callback: ProgressCallback | None = None,
+    apply_mode: str | None = None,
+    source_round: int | None = None,
+    target_round: int | None = None,
+    revision_number: int | None = None,
+    target_paragraph_indexes: list[int] | None = None,
+    based_on_output_path: str | None = None,
+    based_on_manifest_path: str | None = None,
 ) -> dict:
     normalized_input_path = normalize_path(input_path)
     normalized_output_path = normalize_path(output_path)
@@ -505,6 +611,7 @@ def run_round(
     text = normalized_input_path.read_text(encoding="utf-8")
     manifest = build_manifest(text, chunk_limit=chunk_limit, chunk_metric=chunk_metric)
     save_manifest(manifest, normalized_manifest_path)
+    normalized_targets = _normalize_target_paragraph_indexes(target_paragraph_indexes, manifest.paragraph_count) if target_paragraph_indexes is not None else []
 
     progress_payload = _load_progress_payload(
         normalized_progress_path,
@@ -514,6 +621,23 @@ def run_round(
         output_path=normalized_output_path,
         manifest_path=normalized_manifest_path,
         prompt_profile=normalized_prompt_profile,
+        apply_mode=apply_mode,
+        source_round=source_round,
+        target_round=target_round,
+        revision_number=revision_number,
+        target_paragraph_indexes=normalized_targets,
+        based_on_output_path=based_on_output_path,
+        based_on_manifest_path=based_on_manifest_path,
+    )
+    _validate_saved_selection_context(
+        progress_payload,
+        apply_mode=apply_mode,
+        source_round=source_round,
+        target_round=target_round,
+        revision_number=revision_number,
+        target_paragraph_indexes=normalized_targets,
+        based_on_output_path=based_on_output_path,
+        based_on_manifest_path=based_on_manifest_path,
     )
     chunk_outputs = dict(progress_payload["chunk_outputs"])
     completed_chunks = len(chunk_outputs)
@@ -525,6 +649,13 @@ def run_round(
         progress_payload["status"] = "in_progress"
     progress_payload["stop_requested"] = False
     progress_payload["stop_reason"] = ""
+    progress_payload["apply_mode"] = apply_mode or str(progress_payload.get("apply_mode", "") or "")
+    progress_payload["source_round"] = source_round
+    progress_payload["target_round"] = target_round if target_round is not None else round_number
+    progress_payload["revision_number"] = revision_number
+    progress_payload["target_paragraph_indexes"] = normalized_targets
+    progress_payload["based_on_output_path"] = based_on_output_path or str(progress_payload.get("based_on_output_path", "") or "")
+    progress_payload["based_on_manifest_path"] = based_on_manifest_path or str(progress_payload.get("based_on_manifest_path", "") or "")
     _save_progress_payload(normalized_progress_path, progress_payload)
 
     if progress_callback is not None:
@@ -541,11 +672,15 @@ def run_round(
                 "manifestPath": str(normalized_manifest_path),
                 "progressPath": str(normalized_progress_path),
                 "resumed": completed_chunks > 0,
+                "applyMode": progress_payload["apply_mode"],
+                "targetParagraphIndexes": normalized_targets,
+                "revisionNumber": revision_number,
             }
         )
 
     prompts = get_prompt_mapping(normalized_prompt_profile)
     prompt_text = load_prompt(normalized_prompt_profile, round_number)
+    target_paragraph_index_set = set(normalized_targets)
     for index, chunk in enumerate(manifest.chunks, start=1):
         _stop_if_requested(
             stop_request_path=normalized_stop_request_path,
@@ -584,13 +719,16 @@ def run_round(
                 }
             )
         try:
-            chunk_output = _rewrite_chunk_with_validation(
-                transform,
-                prompt_text,
-                chunk.text,
-                round_number,
-                chunk.chunk_id,
-            )
+            if target_paragraph_index_set and chunk.paragraph_index not in target_paragraph_index_set:
+                chunk_output = chunk.text
+            else:
+                chunk_output = _rewrite_chunk_with_validation(
+                    transform,
+                    prompt_text,
+                    chunk.text,
+                    round_number,
+                    chunk.chunk_id,
+                )
         except Exception as exc:
             error_message = str(exc)
             progress_payload["status"] = "paused"
@@ -670,19 +808,27 @@ def run_round(
     progress_payload["stop_reason"] = ""
     _save_progress_payload(normalized_progress_path, progress_payload)
 
-    doc_entry = update_round(
-        doc_id=doc_id,
-        round_number=round_number,
-        prompt=prompts[round_number],
-        prompt_profile=normalized_prompt_profile,
-        input_path=relative_to_root(normalized_input_path),
-        output_path=relative_to_root(normalized_output_path),
-        score_total=score_total,
-        chunk_limit=chunk_limit,
-        input_segment_count=manifest.chunk_count,
-        output_segment_count=len(chunk_outputs),
-        manifest_path=relative_to_root(normalized_manifest_path),
-    )
+    doc_entry: dict[str, object] = {}
+    if revision_number is None:
+        doc_entry = update_round(
+            doc_id=doc_id,
+            round_number=round_number,
+            prompt=prompts[round_number],
+            prompt_profile=normalized_prompt_profile,
+            input_path=relative_to_root(normalized_input_path),
+            output_path=relative_to_root(normalized_output_path),
+            score_total=score_total,
+            chunk_limit=chunk_limit,
+            input_segment_count=manifest.chunk_count,
+            output_segment_count=len(chunk_outputs),
+            manifest_path=relative_to_root(normalized_manifest_path),
+            is_partial=bool(normalized_targets),
+            target_paragraph_indexes=normalized_targets or None,
+            based_on_output_path=relative_to_root(Path(based_on_output_path)) if based_on_output_path else None,
+            based_on_manifest_path=relative_to_root(Path(based_on_manifest_path)) if based_on_manifest_path else None,
+            source_round=source_round,
+            target_round=target_round if target_round is not None else round_number,
+        )
 
     return {
         "doc_entry": doc_entry,
@@ -696,4 +842,12 @@ def run_round(
         "completed_chunk_count": len(chunk_outputs),
         "paragraph_count": manifest.paragraph_count,
         "resumed": completed_chunks > 0,
+        "apply_mode": str(progress_payload.get("apply_mode", "") or ""),
+        "source_round": source_round,
+        "target_round": target_round if target_round is not None else round_number,
+        "revision_number": revision_number,
+        "target_paragraph_indexes": normalized_targets,
+        "based_on_output_path": based_on_output_path or "",
+        "based_on_manifest_path": based_on_manifest_path or "",
+        "is_partial": bool(normalized_targets),
     }

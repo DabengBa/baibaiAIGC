@@ -7,8 +7,10 @@ import type {
   ExportResult,
   HistoryListResponse,
   ModelConfig,
+  OutputPreview,
   RoundProgress,
   RoundResult,
+  RunExecutionOptions,
   TestConnectionResult,
 } from "../types/app";
 
@@ -256,15 +258,19 @@ export const webService: AppService = {
     });
   },
 
-  async startRunRound(sourcePath: string, modelConfig: ModelConfig): Promise<string | null> {
+  async startRunRound(sourcePath: string, modelConfig: ModelConfig, executionOptions?: RunExecutionOptions | null): Promise<string | null> {
     const { runId } = await requestJson<{ runId: string }>("/api/run-round", {
       method: "POST",
-      body: JSON.stringify({ sourcePath, modelConfig: normalizeModelConfig(modelConfig) }),
+      body: JSON.stringify({
+        sourcePath,
+        modelConfig: normalizeModelConfig(modelConfig),
+        executionOptions: executionOptions ?? null,
+      }),
     });
     return runId;
   },
 
-  async awaitRunRound(_sourcePath: string, _modelConfig: ModelConfig, runToken?: string | null): Promise<RoundResult> {
+  async awaitRunRound(_sourcePath: string, _modelConfig: ModelConfig, runToken?: string | null, _executionOptions?: RunExecutionOptions | null): Promise<RoundResult> {
     if (!runToken) {
       throw new Error("runToken is required in web mode.");
     }
@@ -284,6 +290,18 @@ export const webService: AppService = {
 
   async readOutput(outputPath: string): Promise<{ path: string; text: string }> {
     return requestJson<{ path: string; text: string }>(`/api/read-output?outputPath=${encodeURIComponent(outputPath)}`);
+  },
+
+  async readOutputPreview(outputPath: string, manifestPath: string): Promise<OutputPreview> {
+    return requestJson<OutputPreview>(
+      `/api/read-output-preview?outputPath=${encodeURIComponent(outputPath)}&manifestPath=${encodeURIComponent(manifestPath)}`,
+    );
+  },
+
+  async readSourcePreview(inputPath: string, manifestPath: string, promptProfile: "cn" | "en"): Promise<OutputPreview> {
+    return requestJson<OutputPreview>(
+      `/api/read-source-preview?inputPath=${encodeURIComponent(inputPath)}&manifestPath=${encodeURIComponent(manifestPath)}&promptProfile=${encodeURIComponent(promptProfile)}`,
+    );
   },
 
   async exportRound(outputPath: string, targetFormat: "txt" | "docx"): Promise<ExportResult> {

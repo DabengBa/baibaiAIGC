@@ -287,14 +287,24 @@ async fn request_stop(source_path: String, prompt_profile: String) -> Result<ser
 }
 
 #[tauri::command]
-async fn run_aigc_round(window: Window, source_path: String, model_config: ModelConfig) -> Result<serde_json::Value, String> {
+async fn run_aigc_round(
+    window: Window,
+    source_path: String,
+    model_config: ModelConfig,
+    execution_options: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
     spawn_blocking(move || {
         let config_json = serde_json::to_string(&model_config).map_err(|error| error.to_string())?;
-        run_python_json_streaming(window, &[
+        let mut args = vec![
             "run-round".to_string(),
             source_path,
             config_json,
-        ])
+        ];
+        if let Some(options) = execution_options {
+            args.push("--execution-options-json".to_string());
+            args.push(serde_json::to_string(&options).map_err(|error| error.to_string())?);
+        }
+        run_python_json_streaming(window, &args)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -304,6 +314,26 @@ async fn run_aigc_round(window: Window, source_path: String, model_config: Model
 async fn read_output_text(output_path: String) -> Result<serde_json::Value, String> {
     spawn_blocking(move || {
         let output = run_python_json(&["read-output".to_string(), output_path])?;
+        serde_json::from_str(&output).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn read_output_preview(output_path: String, manifest_path: String) -> Result<serde_json::Value, String> {
+    spawn_blocking(move || {
+        let output = run_python_json(&["read-output-preview".to_string(), output_path, manifest_path])?;
+        serde_json::from_str(&output).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn read_source_preview(input_path: String, manifest_path: String, prompt_profile: String) -> Result<serde_json::Value, String> {
+    spawn_blocking(move || {
+        let output = run_python_json(&["read-source-preview".to_string(), input_path, manifest_path, prompt_profile])?;
         serde_json::from_str(&output).map_err(|error| error.to_string())
     })
     .await
@@ -339,6 +369,8 @@ fn main() {
             request_stop,
             run_aigc_round,
             read_output_text,
+            read_output_preview,
+            read_source_preview,
             export_round_output,
         ])
         .run(tauri::generate_context!())

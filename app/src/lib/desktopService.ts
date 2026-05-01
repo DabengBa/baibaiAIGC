@@ -10,8 +10,10 @@ import type {
   ExportResult,
   HistoryListResponse,
   ModelConfig,
+  OutputPreview,
   RoundProgress,
   RoundResult,
+  RunExecutionOptions,
   TestConnectionResult,
 } from "../types/app";
 
@@ -65,12 +67,12 @@ export const desktopService: AppService = {
     return invoke<DocumentStatus>("request_stop", { sourcePath, promptProfile: modelConfig.promptProfile });
   },
 
-  async startRunRound(): Promise<string | null> {
+  async startRunRound(_sourcePath: string, _modelConfig: ModelConfig, _executionOptions?: RunExecutionOptions | null): Promise<string | null> {
     return null;
   },
 
-  async awaitRunRound(sourcePath: string, modelConfig: ModelConfig): Promise<RoundResult> {
-    return invoke<RoundResult>("run_aigc_round", { sourcePath, modelConfig });
+  async awaitRunRound(sourcePath: string, modelConfig: ModelConfig, _runToken?: string | null, executionOptions?: RunExecutionOptions | null): Promise<RoundResult> {
+    return invoke<RoundResult>("run_aigc_round", { sourcePath, modelConfig, executionOptions: executionOptions ?? null });
   },
 
   async listenRoundProgress(onProgress: (payload: RoundProgress) => void): Promise<UnlistenFn> {
@@ -81,6 +83,14 @@ export const desktopService: AppService = {
 
   async readOutput(outputPath: string): Promise<{ path: string; text: string }> {
     return invoke<{ path: string; text: string }>("read_output_text", { outputPath });
+  },
+
+  async readOutputPreview(outputPath: string, manifestPath: string): Promise<OutputPreview> {
+    return invoke<OutputPreview>("read_output_preview", { outputPath, manifestPath });
+  },
+
+  async readSourcePreview(inputPath: string, manifestPath: string, promptProfile: "cn" | "en"): Promise<OutputPreview> {
+    return invoke<OutputPreview>("read_source_preview", { inputPath, manifestPath, promptProfile });
   },
 
   async exportRound(outputPath: string, targetFormat: "txt" | "docx"): Promise<ExportResult> {
