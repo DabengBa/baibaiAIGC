@@ -12,6 +12,14 @@ type Props = {
   pickerLabel?: string;
 };
 
+type PageKey = "workspace" | "history" | "result";
+
+const PAGE_META: Array<{ key: PageKey; title: string; description: string }> = [
+  { key: "workspace", title: "文档工作台", description: "模型设置与文档导入" },
+  { key: "history", title: "历史记录", description: "已处理文档与轮次输出" },
+  { key: "result", title: "本轮结果", description: "输出预览与导出" },
+];
+
 function formatRuntimeStep(progress: RoundProgress | null, fallback: string): string {
   if (!progress) {
     return fallback;
@@ -23,7 +31,7 @@ function formatRuntimeStep(progress: RoundProgress | null, fallback: string): st
     return `正在执行第 ${progress.round} 轮，第 ${progress.currentChunk}/${progress.totalChunks} 块`;
   }
   if (progress.phase === "chunking-ready" && progress.totalChunks) {
-    const prefix = progress.resumed ? "已恢复断点" : "已切块";
+    const prefix = progress.resumed ? "已恢复断点" : "已完成切块";
     const completed = progress.completedChunks ? `，已完成 ${progress.completedChunks} 块` : "";
     return `第 ${progress.round} 轮${prefix}，共 ${progress.totalChunks} 块${completed}，准备开始处理`;
   }
@@ -37,7 +45,7 @@ function formatRuntimeStep(progress: RoundProgress | null, fallback: string): st
     return `第 ${progress.round} 轮已完成第 ${progress.currentChunk}/${progress.totalChunks} 块`;
   }
   if (progress.phase === "stopped") {
-    return progress.message || `第 ${progress.round} 轮已停止，可从当前进度继续`;
+    return progress.message || `第 ${progress.round} 轮已停止，可以从当前进度继续`;
   }
   return fallback;
 }
@@ -72,6 +80,7 @@ function describePromptProfile(promptProfile: "cn" | "en"): string {
 export function App({ service, pickerLabel }: Props) {
   const progressUnlistenRef = useRef<null | (() => void)>(null);
   const [stopBusy, setStopBusy] = useState(false);
+  const [currentPage, setCurrentPage] = useState<PageKey>("workspace");
   const {
     modelConfig,
     documentStatus,
@@ -141,10 +150,15 @@ export function App({ service, pickerLabel }: Props) {
       setNotice("");
       setRuntimeStep("正在载入历史文档");
       const status = await refreshDocumentState(item.sourcePath);
+      setCurrentPage("workspace");
       setRoundResult(null);
       setPreviewText("");
       setNotice(`已切换到历史文档，${describeDocumentProgress(status.nextRound, status.hasNextRound)}`);
-      setRuntimeStep(status.hasNextRound && status.nextRound ? `已载入历史文档，当前到第 ${status.nextRound} 轮` : "已载入历史文档，全部轮次已完成");
+      setRuntimeStep(
+        status.hasNextRound && status.nextRound
+          ? `已载入历史文档，当前到第 ${status.nextRound} 轮`
+          : "已载入历史文档，全部轮次已完成",
+      );
     } catch (appError) {
       setError(String(appError));
       setRuntimeStep("载入历史文档失败");
@@ -177,7 +191,9 @@ export function App({ service, pickerLabel }: Props) {
           }
         }
       }
-      const deletedText = result.deletedRounds.length ? `已删除轮次：${result.deletedRounds.join(", ")}` : "没有匹配到可删除的轮次";
+      const deletedText = result.deletedRounds.length
+        ? `已删除轮次：${result.deletedRounds.join(", ")}`
+        : "没有匹配到可删除的轮次";
       setNotice(result.removedDocument ? `历史已删除。${deletedText}` : `历史已更新。${deletedText}`);
       setRuntimeStep(result.removedDocument ? "历史删除完成" : "历史回滚完成");
     } catch (appError) {
@@ -199,7 +215,7 @@ export function App({ service, pickerLabel }: Props) {
       if (documentStatus) {
         await refreshDocumentState(documentStatus.sourcePath, saved);
       }
-      setNotice(`模型设置已保存到本地，当前模式为${describePromptProfile(saved.promptProfile)}。`);
+      setNotice(`模型设置已保存到本地，当前模式为 ${describePromptProfile(saved.promptProfile)}。`);
       setRuntimeStep("模型设置已保存");
     } catch (appError) {
       setError(String(appError));
@@ -244,16 +260,23 @@ export function App({ service, pickerLabel }: Props) {
       }
       const status = await refreshDocumentState(picked.sourcePath);
       await refreshHistoryList();
+      setCurrentPage("workspace");
       setHistoryPanelOpen(true);
       setRoundResult(null);
       setPreviewText("");
-      setRuntimeStep(status.hasNextRound && status.nextRound ? `已载入文档，当前到第 ${status.nextRound} 轮` : "已载入文档，全部轮次已完成");
+      setRuntimeStep(
+        status.hasNextRound && status.nextRound
+          ? `已载入文档，当前到第 ${status.nextRound} 轮`
+          : "已载入文档，全部轮次已完成",
+      );
       const resumeNotice = status.totalChunkCount && status.completedChunkCount
         ? `检测到第 ${status.nextRound} 轮已有 ${status.completedChunkCount}/${status.totalChunkCount} 块进度，可直接续跑。`
         : "";
       const errorNotice = status.lastError ? ` 当前暂停原因：${status.lastError}` : "";
       const stopNotice = status.stopReason ? ` 当前停止说明：${status.stopReason}` : "";
-      setNotice(`已导入文档，当前使用${describePromptProfile(modelConfig.promptProfile)}，${describeDocumentProgress(status.nextRound, status.hasNextRound)}${resumeNotice}${errorNotice}${stopNotice}`);
+      setNotice(
+        `已导入文档，当前使用 ${describePromptProfile(modelConfig.promptProfile)}，${describeDocumentProgress(status.nextRound, status.hasNextRound)}${resumeNotice}${errorNotice}${stopNotice}`,
+      );
     } catch (appError) {
       setError(String(appError));
       setRuntimeStep("读取文档失败");
@@ -309,7 +332,7 @@ export function App({ service, pickerLabel }: Props) {
         }
       }, runToken);
       setRuntimeStep(`准备执行第 ${documentStatus.nextRound} 轮`);
-      setNotice(`本次运行将使用${describePromptProfile(modelConfig.promptProfile)}。`);
+      setNotice(`本次运行将使用 ${describePromptProfile(modelConfig.promptProfile)}。`);
       const result = await service.awaitRunRound(documentStatus.sourcePath, modelConfig, runToken);
       progressUnlistenRef.current?.();
       progressUnlistenRef.current = null;
@@ -321,8 +344,13 @@ export function App({ service, pickerLabel }: Props) {
       setRuntimeStep(`第 ${result.round} 轮已完成，正在刷新历史`);
       const status = await refreshDocumentState(documentStatus.sourcePath);
       await refreshHistoryList();
+      setCurrentPage("result");
       setHistoryPanelOpen(true);
-      setRuntimeStep(status.hasNextRound && status.nextRound ? `第 ${result.round} 轮完成，下一步可执行第 ${status.nextRound} 轮` : `第 ${result.round} 轮完成，全部轮次已结束`);
+      setRuntimeStep(
+        status.hasNextRound && status.nextRound
+          ? `第 ${result.round} 轮完成，下一步可执行第 ${status.nextRound} 轮`
+          : `第 ${result.round} 轮完成，全部轮次已结束`,
+      );
       setNotice(
         status.hasNextRound
           ? `第 ${result.round} 轮已完成${result.resumed ? "，本次为断点续跑" : ""}，可以继续导出或进入下一轮。`
@@ -404,17 +432,24 @@ export function App({ service, pickerLabel }: Props) {
     }
   }
 
+  const activePage = PAGE_META.find((item) => item.key === currentPage) ?? PAGE_META[0];
+
   return (
     <main className="app-shell">
       <div className="hero-panel">
-        <div>
+        <div className="hero-copy-wrap">
           <p className="eyebrow">baibaiAIGC</p>
           <h1>超级超级好用的降 AI 神器！</h1>
-          <p className="hero-copy">
-            这是一个面向中文论文与技术文档的 Windows 桌面工作台。你可以配置模型、导入 txt 或 Word，逐轮执行改写，并在每轮结束后导出 txt 或 Word。
-          </p>
         </div>
-        {busy ? <span className="status-tag">{progress?.round ? `第 ${progress.round} 轮运行中` : "处理中"}</span> : <span className="status-tag idle">待命</span>}
+        <div className="hero-status-column">
+          <span className={`status-tag ${busy ? "" : "idle"}`}>
+            {busy ? (progress?.round ? `第 ${progress.round} 轮运行中` : "处理中") : "待命"}
+          </span>
+          <div className="hero-status-note">
+            <span>当前页面</span>
+            <strong>{activePage.title}</strong>
+          </div>
+        </div>
       </div>
 
       {error ? <div className="error-banner">{error}</div> : null}
@@ -425,45 +460,78 @@ export function App({ service, pickerLabel }: Props) {
         <strong>{formatRuntimeStep(progress, runtimeStep)}</strong>
       </div>
 
-      <section className="content-grid">
-        <ModelConfigCard
-          value={modelConfig}
-          busy={busy}
-          onChange={setModelConfig}
-          onSave={handleSaveModelConfig}
-          onTestConnection={handleTestConnection}
-        />
-        <DocumentCard
-          value={documentStatus}
-          busy={busy}
-          stopBusy={stopBusy}
-          onPickFile={handlePickFile}
-          onRunRound={handleRunRound}
-          onStop={handleStopRound}
-          pickerLabel={pickerLabel}
-          progressStatusLabel={documentStatus ? describeProgressStatus(documentStatus.progressStatus) : "未开始"}
-        />
+      <nav className="page-switcher" aria-label="页面切换">
+        {PAGE_META.map((page, index) => (
+          <button
+            key={page.key}
+            type="button"
+            className={`page-tab ${page.key === currentPage ? "active" : ""}`}
+            onClick={() => setCurrentPage(page.key)}
+          >
+            <strong>{page.title}</strong>
+            <span>{page.description}</span>
+          </button>
+        ))}
+      </nav>
+
+      <section className={`page-frame ${currentPage === "workspace" ? "" : "page-frame-compact"}`}>
+        {currentPage === "workspace" ? (
+          <div className="page-frame-head">
+            <div>
+              <p className="page-kicker">页面内容</p>
+              <h2>{activePage.title}</h2>
+            </div>
+            <p>{activePage.description}</p>
+          </div>
+        ) : null}
+
+        {currentPage === "workspace" ? (
+          <div className="content-grid">
+            <ModelConfigCard
+              value={modelConfig}
+              busy={busy}
+              onChange={setModelConfig}
+              onSave={handleSaveModelConfig}
+              onTestConnection={handleTestConnection}
+            />
+            <DocumentCard
+              value={documentStatus}
+              busy={busy}
+              stopBusy={stopBusy}
+              onPickFile={handlePickFile}
+              onRunRound={handleRunRound}
+              onStop={handleStopRound}
+              pickerLabel={pickerLabel}
+              progressStatusLabel={documentStatus ? describeProgressStatus(documentStatus.progressStatus) : "未开始"}
+            />
+          </div>
+        ) : null}
+
+        {currentPage === "history" ? (
+          <HistoryCard
+            currentDocId={documentStatus?.docId ?? null}
+            currentHistory={history}
+            items={historyItems}
+            open={historyPanelOpen}
+            busy={busy}
+            embedded
+            onToggle={() => setHistoryPanelOpen(!historyPanelOpen)}
+            onSelect={handleSelectHistory}
+            onDelete={handleDeleteHistory}
+            onDownload={handleHistoryDownload}
+          />
+        ) : null}
+
+        {currentPage === "result" ? (
+          <ResultCard
+            result={roundResult}
+            previewText={previewText}
+            busy={busy}
+            onExportTxt={() => handleExport("txt")}
+            onExportDocx={() => handleExport("docx")}
+          />
+        ) : null}
       </section>
-
-      <HistoryCard
-        currentDocId={documentStatus?.docId ?? null}
-        currentHistory={history}
-        items={historyItems}
-        open={historyPanelOpen}
-        busy={busy}
-        onToggle={() => setHistoryPanelOpen(!historyPanelOpen)}
-        onSelect={handleSelectHistory}
-        onDelete={handleDeleteHistory}
-        onDownload={handleHistoryDownload}
-      />
-
-      <ResultCard
-        result={roundResult}
-        previewText={previewText}
-        busy={busy}
-        onExportTxt={() => handleExport("txt")}
-        onExportDocx={() => handleExport("docx")}
-      />
     </main>
   );
 }

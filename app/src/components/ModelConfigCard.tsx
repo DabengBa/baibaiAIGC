@@ -68,19 +68,6 @@ export function ModelConfigCard({ value, busy, onChange, onSave, onTestConnectio
         </select>
       </label>
       <label className="field">
-        <span>提示词配置</span>
-        <select
-          value={value.promptProfile}
-          onChange={(event) => onChange({
-            ...value,
-            promptProfile: event.target.value as ModelConfig["promptProfile"],
-          })}
-        >
-          <option value="cn">中文两轮提示词</option>
-          <option value="en">英文单轮提示词</option>
-        </select>
-      </label>
-      <label className="field">
         <span>Temperature</span>
         <input
           type="number"

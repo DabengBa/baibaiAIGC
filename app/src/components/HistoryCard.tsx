@@ -6,6 +6,7 @@ type Props = {
   items: HistoryDocumentSummary[];
   open: boolean;
   busy: boolean;
+  embedded?: boolean;
   onToggle: () => void;
   onSelect: (item: HistoryDocumentSummary) => void;
   onDelete: (docId: string, fromRound?: number) => void;
@@ -46,9 +47,20 @@ function formatNextRound(completedRounds: number[]): string {
   return String(Math.max(...filtered) + 1);
 }
 
-export function HistoryCard({ currentDocId, currentHistory, items, open, busy, onToggle, onSelect, onDelete, onDownload }: Props) {
+export function HistoryCard({
+  currentDocId,
+  currentHistory,
+  items,
+  open,
+  busy,
+  embedded = false,
+  onToggle,
+  onSelect,
+  onDelete,
+  onDownload,
+}: Props) {
   return (
-    <section className="glass-card section-stack history-card">
+    <section className={`${embedded ? "section-stack history-card history-card-embedded" : "glass-card section-stack history-card"}`}>
       <div className="section-header">
         <div>
           <h2>历史记录</h2>
