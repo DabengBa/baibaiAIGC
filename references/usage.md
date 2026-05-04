@@ -1,18 +1,18 @@
 # 使用说明
 
-本目录是一套根目录直放式 skill，核心文件如下：
+本目录是仓库根目录下的本地开发版 skill 说明。标准分发与安装入口位于 `skills/baibaiaigc/`。
 
 - `SKILL.md`：总控规则，负责定义触发条件、两轮顺序执行、降 AIGC 记录和输出要求。
-- `prompts/baibaiAIGC1.md`：第 1 轮改写提示词。
-- `prompts/baibaiAIGC2.md`：第 2 轮改写提示词。
+- `prompts/baibaiaigc1.md`：第 1 轮改写提示词。
+- `prompts/baibaiaigc2.md`：第 2 轮改写提示词。
 - `checklist.md`：最终检查与评分规则。
 
 ## 执行顺序
 
 多轮降 AIGC 必须严格按以下顺序执行，但每次调用 skill 只执行其中一轮，轮次之间通过“降 AIGC 记录”和中间文件在多个对话中串联：
 
-1. `prompts/baibaiAIGC1.md`
-2. `prompts/baibaiAIGC2.md`
+1. `prompts/baibaiaigc1.md`
+2. `prompts/baibaiaigc2.md`
 3. `checklist.md`
 
 上一轮输出必须作为下一轮输入，禁止合并两轮一次性处理，也禁止在单次调用中跨轮混用规则。

@@ -12,7 +12,7 @@ or workflows can rely on it:
     "rounds": [
       {
         "round": 1,
-        "prompt": "prompts/baibaiAIGC1.md",
+        "prompt": "prompts/baibaiaigc1.md",
         "input_path": "origin/毕业论文_原始_utf8.txt",
         "output_path": "finish/intermediate/毕业论文_原始_utf8_round1.txt",
         "score_total": 38,
@@ -35,7 +35,7 @@ You can import this module from other Python code, or use the CLI:
   python scripts/aigc_records.py show                # show all records
   python scripts/aigc_records.py show origin/xxx.txt # show one document
   python scripts/aigc_records.py update-round \
-      origin/xxx.txt 1 prompts/baibaiAIGC1.md \
+      origin/xxx.txt 1 prompts/baibaiaigc1.md \
       origin/xxx.txt finish/intermediate/xxx_round1.txt \
       --score-total 38
 
@@ -662,11 +662,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     update_parser.add_argument(
         "round",
         type=int,
-        help="Round number (1, 2, or 3).",
+        help="Round number for the active prompt profile (cn: 1 or 2, en: 1).",
     )
     update_parser.add_argument(
         "prompt",
-        help="Prompt file path used for this round (e.g. prompts/baibaiAIGC1.md).",
+        help="Prompt file path used for this round (e.g. prompts/baibaiaigc1.md).",
     )
     update_parser.add_argument(
         "--prompt-profile",

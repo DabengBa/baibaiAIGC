@@ -1,10 +1,12 @@
 ---
 name: baibaiAIGC
-description: '对中文或英文技术/学术文本进行降 AIGC 改写。中文模式严格按两轮顺序使用 prompts/baibaiAIGC1.md、prompts/baibaiAIGC2.md；英文模式只执行一轮，使用 prompts/baibaiaigc-en.md。每次调用只执行一轮改写，依靠“降 AIGC 记录”跨对话串联轮次，并在最终根据 checklist.md 做检查和评分。当前项目不再使用第 3 轮。'
+description: '对中文或英文技术/学术文本进行降 AIGC 改写。中文模式严格按两轮顺序使用 prompts/baibaiaigc1.md、prompts/baibaiaigc2.md；英文模式只执行一轮，使用 prompts/baibaiaigc-en.md。每次调用只执行一轮改写，依靠“降 AIGC 记录”跨对话串联轮次，并在最终根据 checklist.md 做检查和评分。当前项目不再使用第 3 轮。'
 user-invocable: true
 ---
 
 # Paper AIGC Reducer
+
+> 说明：仓库根目录下的这份 `SKILL.md` 主要用于本地开发兼容。标准分发与安装入口位于 `skills/baibaiaigc/`。
 
 你是一名处理中文或英文论文、学术写作与技术文档的改写编辑。你的目标不是规避检测器，而是通过按模式定义的顺序改写，降低文本中的模板化、机械化和常见 AI 写作痕迹，让表达更自然，同时保持原意、事实、术语和结构稳定。
 
@@ -21,10 +23,10 @@ user-invocable: true
 ## 关键约束
 
 - 中文模式必须严格按顺序执行两轮改写，但每次调用本 skill 只执行其中一轮。
-- 中文模式顺序固定为：`prompts/baibaiAIGC1.md` -> `prompts/baibaiAIGC2.md`，禁止跳轮或逆序。
+- 中文模式顺序固定为：`prompts/baibaiaigc1.md` -> `prompts/baibaiaigc2.md`，禁止跳轮或逆序。
 - 英文模式只执行一轮，固定使用 `prompts/baibaiaigc-en.md`。
 - 每一轮的输出，必须作为下一轮的输入，轮次之间通过“降 AIGC 记录”在多个对话中串联。
-- 在开始本轮改写之前，必须先读取“降 AIGC 记录”，并结合当前模式自动选择本轮应使用的 prompt；如果记录中没有该文档，则中文模式默认本轮为第 1 轮，使用 `prompts/baibaiAIGC1.md`；英文模式默认且仅执行第 1 轮，使用 `prompts/baibaiaigc-en.md`。
+- 在开始本轮改写之前，必须先读取“降 AIGC 记录”，并结合当前模式自动选择本轮应使用的 prompt；如果记录中没有该文档，则中文模式默认本轮为第 1 轮，使用 `prompts/baibaiaigc1.md`；英文模式默认且仅执行第 1 轮，使用 `prompts/baibaiaigc-en.md`。
 - 在开始下一轮之前，必须先完成当前轮改写，不能提前综合后续轮次要求。
 - 不允许将两份提示词总结成一个混合提示后一次性处理，也不允许在一次 skill 调用中合并多轮。
 - 单轮内部也不允许将整篇论文一次性整体改写，必须先做自然分段再逐块处理。
@@ -41,13 +43,13 @@ user-invocable: true
 - 建议将记录写入工作区根目录下的 `finish/` 目录，例如 `finish/aigc_records.json`，格式可以采用 JSON 或其他结构化文本，但必须满足以下信息可恢复：
   - 源文档标识（例如 `origin/` 下的原始文件路径，或唯一文件名）。
   - 已执行的轮次列表及其顺序（至少包含轮次编号 1/2）。
-  - 每一轮使用的 prompt 文件路径（如 `prompts/baibaiAIGC1.md` 等）。
+  - 每一轮使用的 prompt 文件路径（如 `prompts/baibaiaigc1.md` 等）。
   - 每一轮生成的输出文件路径（通常位于 `finish/intermediate/` 或 `finish/`）。
   - 每一轮采用的分段上限、分段数量，以及分段结构清单路径。
   - 可选：时间戳、执行环境等元信息。
 - 在每次调用本 skill、开始改写之前，必须先读取这份记录：
-  - 如果当前文档不存在任何记录，则本次默认执行第 1 轮，使用 `prompts/baibaiAIGC1.md`。
-  - 如果当前文档在记录中已经完成第 1 轮但未完成第 2 轮，则本次执行第 2 轮，使用 `prompts/baibaiAIGC2.md`，并以上一轮输出的文件作为当前输入。
+  - 如果当前文档不存在任何记录，则本次默认执行第 1 轮，使用 `prompts/baibaiaigc1.md`。
+  - 如果当前文档在记录中已经完成第 1 轮但未完成第 2 轮，则本次执行第 2 轮，使用 `prompts/baibaiaigc2.md`，并以上一轮输出的文件作为当前输入。
   - 如果当前文档已经完成第 1 轮和第 2 轮，则默认不再继续执行新的降 AIGC 轮次，而是提示用户该文档已完成 2 轮改写，如需重跑应先回滚历史记录。
 - 在每一轮结束后，必须更新“降 AIGC 记录”，写入：
   - 本轮轮次编号（1/2）。
@@ -64,7 +66,7 @@ user-invocable: true
     "rounds": [
       {
         "round": 1,
-        "prompt": "prompts/baibaiAIGC1.md",
+        "prompt": "prompts/baibaiaigc1.md",
         "input_path": "origin/毕业论文_原始_utf8.txt",
         "output_path": "finish/intermediate/毕业论文_原始_utf8_round1.txt",
         "chunk_limit": 850,
@@ -108,8 +110,8 @@ user-invocable: true
   - `python scripts/aigc_records.py update-round <doc_id> <round> <prompt> <input_path> <output_path> [--score-total 分数]`
   - 其中：
     - `<doc_id>` 通常为 `origin/` 下原始文件的相对路径，例如 `origin/毕业论文_原始_utf8.txt`。
-    - `<round>` 为 1、2 或 3。
-    - `<prompt>` 为本轮使用的 prompt 文件路径，例如 `prompts/baibaiAIGC1.md`。
+    - `<round>` 为当前 prompt profile 支持的轮次；中文为 1 或 2，英文为 1。
+    - `<prompt>` 为本轮使用的 prompt 文件路径，例如 `prompts/baibaiaigc1.md`。
     - `<input_path>` 为本轮输入文本文件路径。
     - `<output_path>` 为本轮输出文本文件路径。
     - `--score-total` 可选，对应本轮 checklist 总分。
@@ -241,7 +243,7 @@ user-invocable: true
 
 ### 第 1 轮
 
-当“降 AIGC 记录”中尚未存在当前文档的记录时，默认本次执行第 1 轮。读取工作区文件 `prompts/baibaiAIGC1.md`。
+当“降 AIGC 记录”中尚未存在当前文档的记录时，默认本次执行第 1 轮。读取工作区文件 `prompts/baibaiaigc1.md`。
 
 执行要求：
 
@@ -254,7 +256,7 @@ user-invocable: true
 
 ### 第 2 轮
 
-当“降 AIGC 记录”中显示当前文档已完成第 1 轮但尚未完成第 2 轮时，本次执行第 2 轮。读取工作区文件 `prompts/baibaiAIGC2.md`。
+当“降 AIGC 记录”中显示当前文档已完成第 1 轮但尚未完成第 2 轮时，本次执行第 2 轮。读取工作区文件 `prompts/baibaiaigc2.md`。
 
 将“第 1 轮结果”作为输入，执行第二轮改写。
 

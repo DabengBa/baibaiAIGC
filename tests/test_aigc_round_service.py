@@ -24,6 +24,7 @@ from aigc_round_service import (
     detect_prefixed_wrapper,
     detect_suffixed_wrapper,
     detect_wrapped_chat_answer,
+    get_prompt_mapping,
     request_stop,
     run_round,
     validate_chunk_output,
@@ -86,6 +87,23 @@ class DetectAnswerStylePatternTests(unittest.TestCase):
                 "说明：这是原始正文。如果你愿意，我也可以继续帮你调整。",
             ),
             "说明： ... 如果你愿意",
+        )
+
+
+class PromptMappingTests(unittest.TestCase):
+    def test_prompt_mapping_uses_lowercase_distribution_paths(self) -> None:
+        self.assertEqual(
+            get_prompt_mapping("cn"),
+            {
+                1: "prompts/baibaiaigc1.md",
+                2: "prompts/baibaiaigc2.md",
+            },
+        )
+        self.assertEqual(
+            get_prompt_mapping("en"),
+            {
+                1: "prompts/baibaiaigc-en.md",
+            },
         )
 
 

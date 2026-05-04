@@ -4,9 +4,11 @@
 </div>
 一个用于中文论文、摘要、课程作业和技术文档多轮降 AIGC 改写的工作目录。
 
+标准分发 skill 入口位于 `skills/baibaiaigc/`。仓库根目录继续保留 web、app、脚本和本地开发所需内容。
+
 本仓库支持四种使用方式：
 
-1. 对话 skill 模式：在聊天中按 `SKILL.md` 约束执行单轮改写。
+1. 对话 skill 模式：在聊天中按 `SKILL.md` 约束执行单轮改写；如需按标准 skill 方式分发或安装，请使用 `skills/baibaiaigc/`。
 2. 脚本 API 模式：通过 `scripts/run_aigc_round.py` 执行单轮分段处理，并按需调用外部 OpenAI 兼容接口。
 3. Web 模式：启动本地后端和前端页面，在浏览器中完成上传、配置、执行和导出。
 4. app：安装app可直接使用
@@ -53,7 +55,7 @@ npm install
 - `python-docx`：用于 `.docx` 文本提取和回写
 
 ## 使用建议
-* 推荐使用web端，然后是脚本，最后是当成skill（skill文本太长不稳定）
+* 推荐使用 web 端，然后是脚本；如果要按标准 skill 分发或安装，请直接使用 `skills/baibaiaigc/`。
 
 ## 快速开始
 ### 1. 准备输入文件
@@ -117,7 +119,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start_web_dev.ps1 -SkipInstal
 特点：
 
 - 不需要你手动配置 `API Key / Model / Base URL`
-入口和约束见 [SKILL.md](SKILL.md)。
+本地开发入口和约束见 [SKILL.md](SKILL.md)。标准分发入口见 [skills/baibaiaigc/SKILL.md](skills/baibaiaigc/SKILL.md)。
 
 ## Web 端运行方式二（自己安装环境运行）
 

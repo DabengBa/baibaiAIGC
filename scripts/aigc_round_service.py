@@ -10,8 +10,8 @@ from chunking import DEFAULT_CHUNK_LIMIT, ChunkManifest, build_manifest, restore
 
 PROMPT_PROFILES = {
     "cn": {
-        1: "prompts/baibaiAIGC1.md",
-        2: "prompts/baibaiAIGC2.md",
+        1: "prompts/baibaiaigc1.md",
+        2: "prompts/baibaiaigc2.md",
     },
     "en": {
         1: "prompts/baibaiaigc-en.md",
