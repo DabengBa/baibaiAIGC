@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 import threading
 import uuid
@@ -25,10 +24,15 @@ from app_service import (
     run_round_for_app,
     test_model_connection,
 )
+from managed_sources import (
+    ORIGIN_DIR,
+    ensure_managed_source_dirs,
+    import_chat_base64_attachment,
+    import_chat_text_attachment,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-ORIGIN_DIR = ROOT_DIR / "origin"
 FINISH_DIR = ROOT_DIR / "finish"
 EXPORT_DIR = FINISH_DIR / "web_exports"
 ALLOWED_WEB_ORIGINS = {
@@ -51,21 +55,12 @@ app = Flask(__name__)
 
 
 def ensure_workspace_dirs() -> None:
-    ORIGIN_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_managed_source_dirs()
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def error_response(message: str, status: int = 400) -> tuple[Response, int]:
     return jsonify({"message": message}), status
-
-
-def sanitize_filename(filename: str) -> str:
-    candidate = Path(filename).name.strip()
-    if not candidate:
-        raise ValueError("Filename is required.")
-    return candidate
-
-
 def _is_within(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root.resolve())
@@ -96,19 +91,11 @@ def require_managed_output_path(path_value: str) -> str:
 
 
 def write_uploaded_file(filename: str, content: str) -> Path:
-    ensure_workspace_dirs()
-    safe_name = sanitize_filename(filename)
-    target_path = ORIGIN_DIR / safe_name
-    target_path.write_text(content, encoding="utf-8")
-    return target_path
+    return import_chat_text_attachment(filename, content)
 
 
 def write_uploaded_binary_file(filename: str, content_base64: str) -> Path:
-    ensure_workspace_dirs()
-    safe_name = sanitize_filename(filename)
-    target_path = ORIGIN_DIR / safe_name
-    target_path.write_bytes(base64.b64decode(content_base64))
-    return target_path
+    return import_chat_base64_attachment(filename, content_base64)
 
 
 def append_progress_event(run_id: str, event: dict[str, Any]) -> None:

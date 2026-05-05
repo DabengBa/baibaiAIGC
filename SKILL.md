@@ -129,11 +129,12 @@ user-invocable: true
 如果用户没有提供明确文件路径，但任务明显是基于文件进行处理：默认到工作区根目录下的 `origin/` 目录查找原始文件。
 
 - 如果 `origin/` 中存在对应原始文件：直接读取并继续执行。
-- 如果 `origin/` 中不存在对应原始文件：先要求用户上传文件，或提示用户先将原始文件放入 `origin/` 目录，再继续执行。
+- 如果 `origin/` 中不存在对应原始文件：如果用户是在聊天中直接上传附件，则先自动保存到 `origin/chat-uploads/` 后继续执行；否则提示用户上传文件，或先将原始文件放入 `origin/` 目录，再继续执行。
 
 如果用户上传的是 `.docx` 文件：按项目当前实现处理。
 
 - `scripts/skill_round_helper.py` 会在需要时通过 `scripts/docx_pipeline.py` 的读写能力把 `.docx` 提取为 `finish/intermediate/*_extracted.txt` 再进入单轮处理。
+- 聊天中上传的 `.txt/.docx` 会先自动落盘为 `origin/chat-uploads/` 下的受管源文件，并继续复用现有 records/intermediate 流程。
 - 本轮处理中间结果默认以 `.txt` 落在 `finish/intermediate/`。
 - 如果需要把结果再导出为 `.docx`，应复用现有脚本或 app/Web 导出流程，而不是假定每次对话都会自动生成最终 `.docx`。
 
