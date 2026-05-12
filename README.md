@@ -4,12 +4,6 @@
    <img src="e7d4bdd094205b9e244508aca83e4d3a.png" alt="图片" width="300">
 </div>
 
-## 在线skill体验入口
-[![在 Socialistic 上试用 baibaiAIGC](https://socialistic.ai/api/embed/baibaiaigc-e729d7?lang=zh)](https://socialistic.ai/zh/skill/baibaiaigc-e729d7?utm_source=github&utm_medium=readme&utm_content=badge&utm_campaign=manual_copy)
-一个用于中文论文、摘要、课程作业和技术文档多轮降 AIGC 改写的工作目录。
-
-仓库根目录就是本项目唯一的正式 skill 入口，同时继续保留 web、app、脚本和本地开发所需内容。
-
 本仓库支持四种使用方式：
 
 1. 对话 skill 模式：在聊天中按 `SKILL.md` 约束执行单轮改写；安装本仓库作为 skill 后即可直接使用。
