@@ -15,6 +15,7 @@ import type {
 export type PickedDocument = {
   sourcePath: string;
   filename: string;
+  displayName: string;
 };
 
 export interface AppService {

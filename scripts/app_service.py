@@ -12,6 +12,7 @@ from app_config import normalize_model_config
 from chunking import build_manifest, load_manifest, split_text_to_paragraphs
 from docx_pipeline import _split_text_into_blocks, write_docx_text
 from llm_client import llm_completion, test_llm_connection
+from managed_sources import get_display_name_for_source
 from skill_round_helper import build_round_context, ensure_skill_input_text, get_document_round_state
 
 
@@ -180,11 +181,13 @@ def _record_entry_to_history(doc_id: str, entry: dict[str, Any]) -> dict[str, An
                 latest_timestamp = revision_timestamp
                 latest_version_output = str(revision.get("outputPath", "") or "")
     origin_path = str(entry.get("origin_path", doc_id))
+    display_name = str(entry.get("display_name", "") or "").strip() or get_display_name_for_source(origin_path)
 
     return {
         "docId": doc_id,
         "sourcePath": origin_path,
         "originPath": origin_path,
+        "displayName": display_name,
         "completedRounds": completed_rounds,
         "latestOutputPath": latest_version_output,
         "lastTimestamp": latest_timestamp,
@@ -250,6 +253,7 @@ def import_document(source_path: str) -> dict[str, Any]:
     return {
         "docId": doc_id,
         "sourcePath": str(normalized_source),
+        "displayName": get_display_name_for_source(normalized_source),
         "sourceKind": normalized_source.suffix.lower() or ".txt",
         "completedRounds": round_state.completed_rounds,
         "nextRound": round_state.next_round,
@@ -350,6 +354,7 @@ def get_document_status(source_path: str, prompt_profile: str = "cn") -> dict[st
         "docId": doc_id,
         "promptProfile": normalized_prompt_profile,
         "sourcePath": str(normalized_source),
+        "displayName": get_display_name_for_source(normalized_source),
         "sourceKind": normalized_source.suffix.lower() or ".txt",
         "completedRounds": completed_rounds,
         "nextRound": round_state.next_round,
@@ -406,6 +411,7 @@ def get_document_history(source_path: str) -> dict[str, Any]:
     return {
         "docId": doc_id,
         "sourcePath": str(normalized_source),
+        "displayName": get_display_name_for_source(normalized_source),
         "rounds": history_rounds,
     }
 

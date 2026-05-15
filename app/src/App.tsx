@@ -101,6 +101,27 @@ function buildActivePreviewFromVersion(
   };
 }
 
+function buildDisplayNameMap(items: HistoryDocumentSummary[], currentDocId: string | null, currentDisplayName: string | null): Map<string, string> {
+  const usageCount = new Map<string, number>();
+  const displayMap = new Map<string, string>();
+  const orderedItems = items.map((item) => ({
+    docId: item.docId,
+    rawName: item.displayName || item.originPath || item.sourcePath || item.docId,
+  }));
+
+  if (currentDocId && currentDisplayName && !orderedItems.some((item) => item.docId === currentDocId)) {
+    orderedItems.unshift({ docId: currentDocId, rawName: currentDisplayName });
+  }
+
+  orderedItems.forEach((item) => {
+    const nextIndex = usageCount.get(item.rawName) ?? 0;
+    usageCount.set(item.rawName, nextIndex + 1);
+    displayMap.set(item.docId, nextIndex === 0 ? item.rawName : `${item.rawName}（${nextIndex}）`);
+  });
+
+  return displayMap;
+}
+
 export function App({ service, pickerLabel }: Props) {
   const progressUnlistenRef = useRef<null | (() => void)>(null);
   const [stopBusy, setStopBusy] = useState(false);
@@ -134,6 +155,8 @@ export function App({ service, pickerLabel }: Props) {
     setBusy,
     setError,
   } = useAppState();
+  const displayNameMap = buildDisplayNameMap(historyItems, documentStatus?.docId ?? null, documentStatus?.displayName ?? null);
+  const currentDisplayName = documentStatus ? (displayNameMap.get(documentStatus.docId) || documentStatus.displayName || documentStatus.docId) : undefined;
 
   useEffect(() => {
     service.loadModelConfig()
@@ -646,6 +669,7 @@ export function App({ service, pickerLabel }: Props) {
             />
             <DocumentCard
               value={documentStatus}
+              displayName={currentDisplayName}
               busy={busy}
               stopBusy={stopBusy}
               onPickFile={handlePickFile}

@@ -44,6 +44,7 @@ export const desktopService: AppService = {
     return {
       sourcePath: selected,
       filename: selected.split(/[/\\]/).pop() ?? selected,
+      displayName: selected.split(/[/\\]/).pop() ?? selected,
     };
   },
 

@@ -2,6 +2,7 @@ import type { DocumentStatus } from "../types/app";
 
 type Props = {
   value: DocumentStatus | null;
+  displayName?: string;
   busy: boolean;
   stopBusy: boolean;
   onPickFile: () => void;
@@ -10,15 +11,6 @@ type Props = {
   pickerLabel?: string;
   progressStatusLabel: string;
 };
-
-function displayDocId(status: DocumentStatus): string {
-  const normalizedDocId = status.docId.replace(/\\/g, "/");
-  if (normalizedDocId.includes("/")) {
-    const segments = normalizedDocId.split("/").filter(Boolean);
-    return segments[segments.length - 1] ?? status.docId;
-  }
-  return status.docId;
-}
 
 function renderResumeStatus(status: DocumentStatus): string {
   if (!status.hasNextRound || status.isComplete) {
@@ -32,6 +24,7 @@ function renderResumeStatus(status: DocumentStatus): string {
 
 export function DocumentCard({
   value,
+  displayName,
   busy,
   stopBusy,
   onPickFile,
@@ -48,7 +41,7 @@ export function DocumentCard({
       <div className="section-header">
         <div>
           <h2>文档工作台</h2>
-          <p>支持 txt 与 Word。上传 Word 后会先自动提取为中间 txt。</p>
+          <p>支持 txt 和 Word。上传 Word 后会先自动提取为中间 txt。</p>
         </div>
         <button className="secondary-button" onClick={onPickFile} disabled={busy}>
           {pickerLabel}
@@ -58,8 +51,8 @@ export function DocumentCard({
         <>
           <div className="info-grid">
             <div className="info-item">
-              <span>文档标识</span>
-              <strong>{displayDocId(value)}</strong>
+              <span>文件名称</span>
+              <strong>{displayName || value.displayName || value.docId}</strong>
             </div>
             <div className="info-item">
               <span>文件类型</span>

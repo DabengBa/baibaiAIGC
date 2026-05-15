@@ -27,8 +27,11 @@ from app_service import (
 from managed_sources import (
     ORIGIN_DIR,
     ensure_managed_source_dirs,
+    find_latest_matching_chat_upload,
+    get_display_name_for_source,
     import_chat_base64_attachment,
     import_chat_text_attachment,
+    sanitize_filename,
 )
 
 
@@ -96,6 +99,21 @@ def write_uploaded_file(filename: str, content: str) -> Path:
 
 def write_uploaded_binary_file(filename: str, content_base64: str) -> Path:
     return import_chat_base64_attachment(filename, content_base64)
+
+
+def build_upload_response(
+    source_path: Path,
+    *,
+    conflict: bool,
+    reused: bool,
+) -> dict[str, Any]:
+    return {
+        "sourcePath": str(source_path),
+        "filename": source_path.name,
+        "displayName": get_display_name_for_source(source_path),
+        "conflict": conflict,
+        "reused": reused,
+    }
 
 
 def append_progress_event(run_id: str, event: dict[str, Any]) -> None:
@@ -193,15 +211,24 @@ def post_test_connection() -> tuple[Response, int] | Response:
 def post_upload_document() -> tuple[Response, int] | Response:
     try:
         payload = request.get_json(silent=True) or {}
-        filename = str(payload.get("filename", "")).strip()
+        filename = sanitize_filename(str(payload.get("filename", "")).strip())
+        duplicate_action = str(payload.get("duplicateAction", "") or "").strip().lower()
         encoding = str(payload.get("encoding", "text")).strip().lower()
+        existing_path = find_latest_matching_chat_upload(filename)
+
+        if existing_path is not None and duplicate_action not in {"reuse_existing", "replace_with_new"}:
+            return jsonify(build_upload_response(existing_path, conflict=True, reused=False)), 200
+
+        if existing_path is not None and duplicate_action == "reuse_existing":
+            return jsonify(build_upload_response(existing_path, conflict=False, reused=True)), 200
+
         if encoding == "base64":
             content_base64 = str(payload.get("contentBase64", ""))
             target_path = write_uploaded_binary_file(filename, content_base64)
         else:
             content = str(payload.get("content", ""))
             target_path = write_uploaded_file(filename, content)
-        return jsonify({"sourcePath": str(target_path), "filename": target_path.name}), 201
+        return jsonify(build_upload_response(target_path, conflict=False, reused=False)), 201
     except Exception as exc:
         return error_response(str(exc))
 

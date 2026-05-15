@@ -98,6 +98,7 @@ export type TestConnectionResult = {
 export type DocumentStatus = {
   docId: string;
   sourcePath: string;
+  displayName: string;
   sourceKind: string;
   completedRounds: number[];
   nextRound: number | null;
@@ -210,6 +211,7 @@ export type HistoryRevision = {
 export type DocumentHistory = {
   docId: string;
   sourcePath: string;
+  displayName: string;
   rounds: HistoryRound[];
 };
 
@@ -217,6 +219,7 @@ export type HistoryDocumentSummary = {
   docId: string;
   sourcePath: string;
   originPath: string;
+  displayName: string;
   completedRounds: number[];
   latestOutputPath: string;
   lastTimestamp: string;

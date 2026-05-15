@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -9,6 +10,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 ORIGIN_DIR = ROOT_DIR / "origin"
 CHAT_UPLOADS_DIR = ORIGIN_DIR / "chat-uploads"
 SUPPORTED_MANAGED_SOURCE_SUFFIXES = {".txt", ".docx"}
+CHAT_UPLOAD_NAME_PATTERN = re.compile(r"^(?P<stem>.+?)_(?P<stamp>\d{8}_\d{6})(?:_(?P<counter>\d+))?$")
 
 
 def ensure_managed_source_dirs() -> None:
@@ -44,6 +46,41 @@ def build_chat_upload_path(filename: str, *, now: datetime | None = None) -> Pat
         candidate = CHAT_UPLOADS_DIR / f"{stem}_{stamp}_{counter}{suffix}"
         counter += 1
     return candidate
+
+
+def get_original_filename_from_managed_name(filename: str) -> str:
+    safe_name = sanitize_filename(filename)
+    suffix = validate_managed_source_suffix(safe_name)
+    stem = Path(safe_name).stem
+    match = CHAT_UPLOAD_NAME_PATTERN.fullmatch(stem)
+    if not match:
+        return safe_name
+    original_stem = str(match.group("stem") or "").strip()
+    if not original_stem:
+        return safe_name
+    return f"{original_stem}{suffix}"
+
+
+def get_display_name_for_source(path: Path | str) -> str:
+    return get_original_filename_from_managed_name(Path(path).name)
+
+
+def list_matching_chat_uploads(filename: str) -> list[Path]:
+    ensure_managed_source_dirs()
+    target_name = sanitize_filename(filename)
+    validate_managed_source_suffix(target_name)
+    matches = [
+        candidate
+        for candidate in CHAT_UPLOADS_DIR.iterdir()
+        if candidate.is_file() and get_display_name_for_source(candidate) == target_name
+    ]
+    matches.sort(key=lambda candidate: (candidate.stat().st_mtime, candidate.name), reverse=True)
+    return matches
+
+
+def find_latest_matching_chat_upload(filename: str) -> Path | None:
+    matches = list_matching_chat_uploads(filename)
+    return matches[0] if matches else None
 
 
 def import_chat_text_attachment(filename: str, content: str) -> Path:

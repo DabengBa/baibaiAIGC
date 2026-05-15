@@ -31,10 +31,29 @@ function formatTimestamp(value: string): string {
   }).format(date);
 }
 
-function formatDocName(item: HistoryDocumentSummary): string {
-  const rawValue = item.originPath || item.sourcePath || item.docId;
-  const parts = rawValue.split(/[\\/]/);
-  return parts[parts.length - 1] || rawValue;
+function buildDisplayNameMap(items: HistoryDocumentSummary[], currentHistory: DocumentHistory | null, currentDocId: string | null): Map<string, string> {
+  const usageCount = new Map<string, number>();
+  const displayMap = new Map<string, string>();
+
+  const orderedItems = items.map((item) => {
+    const rawName = item.displayName || item.originPath || item.sourcePath || item.docId;
+    return { docId: item.docId, rawName };
+  });
+
+  if (currentHistory && currentDocId && !orderedItems.some((item) => item.docId === currentDocId)) {
+    orderedItems.unshift({
+      docId: currentDocId,
+      rawName: currentHistory.displayName || currentHistory.sourcePath || currentHistory.docId,
+    });
+  }
+
+  orderedItems.forEach((item) => {
+    const nextIndex = usageCount.get(item.rawName) ?? 0;
+    usageCount.set(item.rawName, nextIndex + 1);
+    displayMap.set(item.docId, nextIndex === 0 ? item.rawName : `${item.rawName}（${nextIndex}）`);
+  });
+
+  return displayMap;
 }
 
 function formatNextRound(completedRounds: number[]): string {
@@ -82,6 +101,8 @@ export function HistoryCard({
   onDownload,
   onPreview,
 }: Props) {
+  const displayNameMap = buildDisplayNameMap(items, currentHistory, currentDocId);
+
   return (
     <section className={`${embedded ? "section-stack history-card history-card-embedded" : "glass-card section-stack history-card"}`}>
       <div className="section-header">
@@ -100,11 +121,12 @@ export function HistoryCard({
               {items.map((item) => {
                 const activeRounds = currentDocId === item.docId && currentHistory?.rounds.length ? currentHistory.rounds : item.rounds;
                 const isActive = currentDocId === item.docId;
+                const displayName = displayNameMap.get(item.docId) || item.displayName || item.originPath || item.sourcePath || item.docId;
                 return (
                   <article key={item.docId} className={`history-item history-document ${isActive ? "active" : ""}`}>
                     <div className="history-item-head history-document-head">
                       <div>
-                        <strong>{formatDocName(item)}</strong>
+                        <strong>{displayName}</strong>
                         <span>{item.lastTimestamp ? `最近更新 ${formatTimestamp(item.lastTimestamp)}` : "暂无时间"}</span>
                       </div>
                       <span className="pill">已完成 {item.completedRounds.length} 轮</span>

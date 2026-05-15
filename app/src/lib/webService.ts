@@ -24,6 +24,11 @@ type RunStream = {
   close: () => void;
 };
 
+type UploadDocumentResponse = PickedDocument & {
+  conflict?: boolean;
+  reused?: boolean;
+};
+
 const runStreams = new Map<string, RunStream>();
 
 async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
@@ -206,21 +211,33 @@ export const webService: AppService = {
         }
         try {
           const lowerName = file.name.toLowerCase();
-          const requestBody = lowerName.endsWith(".docx")
-            ? {
+          const buildRequestBody = async (duplicateAction?: "reuse_existing" | "replace_with_new") => {
+            if (lowerName.endsWith(".docx")) {
+              return {
                 filename: file.name,
                 encoding: "base64",
                 contentBase64: await readFileAsBase64(file),
-              }
-            : {
-                filename: file.name,
-                encoding: "text",
-                content: await readFileWithFallback(file),
+                duplicateAction: duplicateAction ?? null,
               };
-          const payload = await requestJson<PickedDocument>("/api/upload-document", {
+            }
+            return {
+              filename: file.name,
+              encoding: "text",
+              content: await readFileWithFallback(file),
+              duplicateAction: duplicateAction ?? null,
+            };
+          };
+
+          const upload = async (duplicateAction?: "reuse_existing" | "replace_with_new") => requestJson<UploadDocumentResponse>("/api/upload-document", {
             method: "POST",
-            body: JSON.stringify(requestBody),
+            body: JSON.stringify(await buildRequestBody(duplicateAction)),
           });
+
+          let payload = await upload();
+          if (payload.conflict) {
+            const reuseExisting = globalThis.confirm("检测到同名文件。选择“确定”使用以前的文件，选择“取消”重新上传新文件。");
+            payload = await upload(reuseExisting ? "reuse_existing" : "replace_with_new");
+          }
           resolve(payload);
         } catch (error) {
           reject(error);
