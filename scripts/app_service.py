@@ -660,8 +660,9 @@ def run_round_for_app(
             except Exception as exc:
                 raise RuntimeError(f"LLM request failed for chunk {chunk_id}: {exc}") from exc
 
+    requested_apply_mode = str((execution_options or {}).get("applyMode", "") or "").strip()
     status = get_document_status(source_path, prompt_profile=prompt_profile)
-    if bool(status.get("isComplete")):
+    if bool(status.get("isComplete")) and requested_apply_mode != "current_round_revision":
         raise ValueError(f"Document already completed all {MAX_ROUNDS} rounds.")
 
     active_progress_callback = progress_callback or emit_progress_event
