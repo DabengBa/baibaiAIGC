@@ -56,6 +56,7 @@ from typing import Any, Dict, List, Optional
 ROOT_DIR = Path(__file__).resolve().parents[1]
 FINISH_DIR = ROOT_DIR / "finish"
 RECORDS_PATH = FINISH_DIR / "aigc_records.json"
+VALID_RECORD_STATUSES = {"in_progress", "interrupted", "completed"}
 
 
 @dataclass
@@ -77,6 +78,13 @@ class RevisionRecord:
     based_on_manifest_path: Optional[str] = None
     source_round: Optional[int] = None
     target_round: Optional[int] = None
+    status: str = "completed"
+    progress_path: Optional[str] = None
+    last_error: Optional[str] = None
+    last_error_chunk_id: Optional[str] = None
+    completed_chunk_count: Optional[int] = None
+    total_chunk_count: Optional[int] = None
+    stop_reason: Optional[str] = None
     timestamp: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -105,6 +113,13 @@ class RoundRecord:
     based_on_manifest_path: Optional[str] = None
     source_round: Optional[int] = None
     target_round: Optional[int] = None
+    status: str = "completed"
+    progress_path: Optional[str] = None
+    last_error: Optional[str] = None
+    last_error_chunk_id: Optional[str] = None
+    completed_chunk_count: Optional[int] = None
+    total_chunk_count: Optional[int] = None
+    stop_reason: Optional[str] = None
     revisions: Optional[List[Dict[str, Any]]] = None
     timestamp: str = ""
 
@@ -122,6 +137,13 @@ def _normalize_paragraph_indexes(value: Any) -> Optional[List[int]]:
     return indexes
 
 
+def normalize_record_status(value: Any) -> str:
+    candidate = str(value or "").strip().lower()
+    if candidate in VALID_RECORD_STATUSES:
+        return candidate
+    return "completed"
+
+
 def _prune_record_dict(data: Dict[str, Any]) -> Dict[str, Any]:
     cleaned = dict(data)
     if not cleaned.get("timestamp"):
@@ -135,6 +157,12 @@ def _prune_record_dict(data: Dict[str, Any]) -> Dict[str, Any]:
         "target_paragraph_indexes",
         "based_on_output_path",
         "based_on_manifest_path",
+        "progress_path",
+        "last_error",
+        "last_error_chunk_id",
+        "completed_chunk_count",
+        "total_chunk_count",
+        "stop_reason",
         "source_round",
         "target_round",
         "revisions",
@@ -237,17 +265,26 @@ def normalize_records(records: Dict[str, Any]) -> Dict[str, Any]:
                 value = normalized_item.get(field)
                 if isinstance(value, str):
                     normalized_item[field] = normalize_record_path(value)
-            for field in ("based_on_output_path", "based_on_manifest_path"):
+            for field in ("based_on_output_path", "based_on_manifest_path", "progress_path"):
                 value = normalized_item.get(field)
                 if isinstance(value, str):
                     normalized_item[field] = normalize_record_path(value)
             prompt_profile = str(normalized_item.get("prompt_profile", "cn") or "cn").strip().lower()
             normalized_item["prompt_profile"] = prompt_profile if prompt_profile in {"cn", "en"} else "cn"
             normalized_item["kind"] = "round"
+            normalized_item["status"] = normalize_record_status(normalized_item.get("status"))
             normalized_item["is_partial"] = bool(normalized_item.get("is_partial"))
             normalized_item["target_paragraph_indexes"] = _normalize_paragraph_indexes(
                 normalized_item.get("target_paragraph_indexes"),
             )
+            for field in ("completed_chunk_count", "total_chunk_count"):
+                value = normalized_item.get(field)
+                if isinstance(value, int):
+                    normalized_item[field] = int(value)
+                elif isinstance(value, str) and value.isdigit():
+                    normalized_item[field] = int(value)
+                else:
+                    normalized_item.pop(field, None)
             revisions = normalized_item.get("revisions")
             normalized_revisions: List[Dict[str, Any]] = []
             if isinstance(revisions, list):
@@ -262,17 +299,26 @@ def normalize_records(records: Dict[str, Any]) -> Dict[str, Any]:
                         value = normalized_revision.get(field)
                         if isinstance(value, str):
                             normalized_revision[field] = normalize_record_path(value)
-                    for field in ("based_on_output_path", "based_on_manifest_path"):
+                    for field in ("based_on_output_path", "based_on_manifest_path", "progress_path"):
                         value = normalized_revision.get(field)
                         if isinstance(value, str):
                             normalized_revision[field] = normalize_record_path(value)
                     revision_prompt_profile = str(normalized_revision.get("prompt_profile", prompt_profile) or prompt_profile).strip().lower()
                     normalized_revision["prompt_profile"] = revision_prompt_profile if revision_prompt_profile in {"cn", "en"} else "cn"
                     normalized_revision["kind"] = "revision"
+                    normalized_revision["status"] = normalize_record_status(normalized_revision.get("status"))
                     normalized_revision["is_partial"] = bool(normalized_revision.get("is_partial", True))
                     normalized_revision["target_paragraph_indexes"] = _normalize_paragraph_indexes(
                         normalized_revision.get("target_paragraph_indexes"),
                     )
+                    for field in ("completed_chunk_count", "total_chunk_count"):
+                        value = normalized_revision.get(field)
+                        if isinstance(value, int):
+                            normalized_revision[field] = int(value)
+                        elif isinstance(value, str) and value.isdigit():
+                            normalized_revision[field] = int(value)
+                        else:
+                            normalized_revision.pop(field, None)
                     normalized_revisions.append(normalized_revision)
             if normalized_revisions:
                 normalized_revisions.sort(key=lambda revision: revision.get("revision_number", 0))
@@ -381,6 +427,13 @@ def update_round(
     based_on_manifest_path: Optional[str] = None,
     source_round: Optional[int] = None,
     target_round: Optional[int] = None,
+    status: str = "completed",
+    progress_path: Optional[str] = None,
+    last_error: Optional[str] = None,
+    last_error_chunk_id: Optional[str] = None,
+    completed_chunk_count: Optional[int] = None,
+    total_chunk_count: Optional[int] = None,
+    stop_reason: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Update (or create) the record for a single document round.
 
@@ -429,6 +482,13 @@ def update_round(
         based_on_manifest_path=normalize_record_path(based_on_manifest_path) if based_on_manifest_path else None,
         source_round=source_round,
         target_round=target_round,
+        status=normalize_record_status(status),
+        progress_path=normalize_record_path(progress_path) if progress_path else None,
+        last_error=str(last_error or "").strip() or None,
+        last_error_chunk_id=str(last_error_chunk_id or "").strip() or None,
+        completed_chunk_count=completed_chunk_count,
+        total_chunk_count=total_chunk_count,
+        stop_reason=str(stop_reason or "").strip() or None,
         revisions=[revision for revision in existing_revisions if isinstance(revision, dict)] if isinstance(existing_revisions, list) else None,
         timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     )
@@ -463,6 +523,13 @@ def update_revision(
     based_on_manifest_path: Optional[str] = None,
     source_round: Optional[int] = None,
     target_round: Optional[int] = None,
+    status: str = "completed",
+    progress_path: Optional[str] = None,
+    last_error: Optional[str] = None,
+    last_error_chunk_id: Optional[str] = None,
+    completed_chunk_count: Optional[int] = None,
+    total_chunk_count: Optional[int] = None,
+    stop_reason: Optional[str] = None,
 ) -> Dict[str, Any]:
     normalized_doc_id = normalize_doc_id(doc_id)
     records = load_records_normalized()
@@ -510,6 +577,13 @@ def update_revision(
         based_on_manifest_path=normalize_record_path(based_on_manifest_path) if based_on_manifest_path else None,
         source_round=source_round,
         target_round=target_round,
+        status=normalize_record_status(status),
+        progress_path=normalize_record_path(progress_path) if progress_path else None,
+        last_error=str(last_error or "").strip() or None,
+        last_error_chunk_id=str(last_error_chunk_id or "").strip() or None,
+        completed_chunk_count=completed_chunk_count,
+        total_chunk_count=total_chunk_count,
+        stop_reason=str(stop_reason or "").strip() or None,
         timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     )
 

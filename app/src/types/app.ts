@@ -1,5 +1,6 @@
 export type ApiType = "chat_completions" | "responses";
 export type PromptProfile = "cn" | "en";
+export type LifecycleStatus = "in_progress" | "interrupted" | "completed";
 export type RoundProgressPhase =
   | "chunking-ready"
   | "chunk-skipped"
@@ -110,6 +111,8 @@ export type DocumentStatus = {
   manifestPath: string;
   progressPath: string;
   progressStatus: string;
+  status: LifecycleStatus;
+  canResume: boolean;
   completedChunkCount: number;
   totalChunkCount: number;
   lastError: string;
@@ -158,6 +161,8 @@ export type HistoryRound = {
   manifestPath: string;
   progressPath: string;
   progressStatus: string;
+  status: LifecycleStatus;
+  canResume: boolean;
   completedChunkCount: number;
   totalChunkCount: number;
   lastError: string;
@@ -188,6 +193,8 @@ export type HistoryRevision = {
   manifestPath: string;
   progressPath: string;
   progressStatus: string;
+  status: LifecycleStatus;
+  canResume: boolean;
   completedChunkCount: number;
   totalChunkCount: number;
   lastError: string;

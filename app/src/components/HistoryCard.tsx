@@ -67,6 +67,16 @@ function formatNextRound(completedRounds: number[]): string {
   return String(Math.max(...filtered) + 1);
 }
 
+function describeLifecycleStatus(status: HistoryRound["status"] | HistoryRevision["status"]): string {
+  if (status === "completed") {
+    return "已完成";
+  }
+  if (status === "interrupted") {
+    return "中断";
+  }
+  return "处理中";
+}
+
 function renderVersionActions(
   item: HistoryRound | HistoryRevision,
   busy: boolean,
@@ -85,6 +95,37 @@ function renderVersionActions(
         下载 Word
       </button>
     </div>
+  );
+}
+
+function renderLifecycleMeta(item: HistoryRound | HistoryRevision) {
+  return (
+    <>
+      <div className="history-metrics">
+        <span>状态 {describeLifecycleStatus(item.status)}</span>
+        <span>进度 {item.totalChunkCount ? `${item.completedChunkCount}/${item.totalChunkCount}` : "-"}</span>
+        <span>输入块数 {item.inputSegmentCount ?? "-"}</span>
+        <span>输出块数 {item.outputSegmentCount ?? "-"}</span>
+      </div>
+      {item.lastError ? (
+        <div className="path-box compact-box">
+          <span>中断原因</span>
+          <strong>{item.lastError}</strong>
+        </div>
+      ) : null}
+      {item.stopReason ? (
+        <div className="path-box compact-box">
+          <span>停止说明</span>
+          <strong>{item.stopReason}</strong>
+        </div>
+      ) : null}
+      {item.canResume ? (
+        <div className="path-box compact-box">
+          <span>继续续跑</span>
+          <strong>切换到此文档后可从当前断点继续执行</strong>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -155,9 +196,8 @@ export function HistoryCard({
                               <strong>第 {roundItem.round} 轮</strong>
                               <span>{formatTimestamp(roundItem.timestamp)}</span>
                             </div>
+                            {renderLifecycleMeta(roundItem)}
                             <div className="history-metrics">
-                              <span>输入块数 {roundItem.inputSegmentCount ?? "-"}</span>
-                              <span>输出块数 {roundItem.outputSegmentCount ?? "-"}</span>
                               <span>修订版 {roundItem.revisions.length}</span>
                             </div>
                             <div className="path-box compact-box">
@@ -185,9 +225,8 @@ export function HistoryCard({
                                       <strong>第 {roundItem.round} 轮 / 修订 {revision.revisionNumber}</strong>
                                       <span>{formatTimestamp(revision.timestamp)}</span>
                                     </div>
+                                    {renderLifecycleMeta(revision)}
                                     <div className="history-metrics">
-                                      <span>输入块数 {revision.inputSegmentCount ?? "-"}</span>
-                                      <span>输出块数 {revision.outputSegmentCount ?? "-"}</span>
                                       <span>已选段落 {revision.targetParagraphIndexes.length}</span>
                                     </div>
                                     <div className="path-box compact-box">

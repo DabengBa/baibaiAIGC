@@ -6,18 +6,163 @@ import shutil
 from pathlib import Path
 from typing import Any, Callable
 
-from aigc_records import delete_document, delete_rounds, list_records, normalize_doc_id, update_revision
-from aigc_round_service import MAX_ROUNDS, build_progress_path, get_chunk_metric, normalize_path, request_stop
+from aigc_records import delete_document, delete_rounds, list_records, normalize_doc_id, normalize_record_status, update_revision, update_round
+from aigc_round_service import MAX_ROUNDS, RoundPausedError, RoundStoppedError, build_progress_path, get_chunk_metric, normalize_path, request_stop, run_round
 from app_config import normalize_model_config
 from chunking import build_manifest, load_manifest, split_text_to_paragraphs
 from docx_pipeline import _split_text_into_blocks, write_docx_text
 from llm_client import llm_completion, test_llm_connection
 from managed_sources import get_display_name_for_source
-from skill_round_helper import build_round_context, ensure_skill_input_text, get_document_round_state
+from skill_round_helper import build_execution_context, build_round_context, ensure_skill_input_text, get_document_round_state
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 ProgressCallback = Callable[[dict[str, Any]], None]
+
+
+def _derive_history_status(
+    record_status: str,
+    progress_status: str,
+    *,
+    completed_chunk_count: int,
+    total_chunk_count: int,
+) -> str:
+    normalized_record_status = normalize_record_status(record_status)
+    normalized_progress_status = str(progress_status or "").strip().lower()
+    if normalized_record_status == "completed":
+        return "completed"
+    if normalized_progress_status == "completed":
+        return "completed"
+    if normalized_record_status == "in_progress":
+        if normalized_progress_status in {"paused", "stopped"}:
+            return "interrupted"
+        if total_chunk_count > 0 and completed_chunk_count >= total_chunk_count:
+            return "completed"
+        return "in_progress"
+    return "interrupted"
+
+
+def _can_resume(
+    status: str,
+    progress_path: str,
+    completed_chunk_count: int,
+    total_chunk_count: int,
+) -> bool:
+    return (
+        status == "interrupted"
+        and bool(progress_path)
+        and total_chunk_count > 0
+        and completed_chunk_count < total_chunk_count
+    )
+
+
+def _build_record_progress_state(
+    *,
+    progress_path: str,
+    progress_status: str,
+    completed_chunk_count: int,
+    total_chunk_count: int,
+    last_error: str,
+    last_error_chunk_id: str,
+    stop_reason: str,
+) -> dict[str, Any]:
+    status = _derive_history_status(
+        "completed" if progress_status == "completed" else "in_progress",
+        progress_status,
+        completed_chunk_count=completed_chunk_count,
+        total_chunk_count=total_chunk_count,
+    )
+    return {
+        "status": status,
+        "progressPath": progress_path,
+        "progressStatus": progress_status,
+        "completedChunkCount": completed_chunk_count,
+        "totalChunkCount": total_chunk_count,
+        "lastError": last_error,
+        "lastErrorChunkId": last_error_chunk_id,
+        "stopReason": stop_reason,
+        "canResume": _can_resume(status, progress_path, completed_chunk_count, total_chunk_count),
+    }
+
+
+def _upsert_history_record(
+    *,
+    doc_id: str,
+    prompt_profile: str,
+    round_number: int,
+    prompt: str,
+    input_path: str,
+    output_path: str,
+    manifest_path: str,
+    progress_path: str,
+    status: str,
+    chunk_limit: int | None = None,
+    input_segment_count: int | None = None,
+    output_segment_count: int | None = None,
+    is_partial: bool = False,
+    target_paragraph_indexes: list[int] | None = None,
+    based_on_output_path: str | None = None,
+    based_on_manifest_path: str | None = None,
+    source_round: int | None = None,
+    target_round: int | None = None,
+    revision_number: int | None = None,
+    last_error: str | None = None,
+    last_error_chunk_id: str | None = None,
+    completed_chunk_count: int | None = None,
+    total_chunk_count: int | None = None,
+    stop_reason: str | None = None,
+) -> dict[str, Any]:
+    if revision_number is not None:
+        return update_revision(
+            doc_id=doc_id,
+            round_number=round_number,
+            revision_number=revision_number,
+            prompt=prompt,
+            prompt_profile=prompt_profile,
+            input_path=input_path,
+            output_path=output_path,
+            chunk_limit=chunk_limit,
+            input_segment_count=input_segment_count,
+            output_segment_count=output_segment_count,
+            manifest_path=manifest_path,
+            target_paragraph_indexes=list(target_paragraph_indexes or []),
+            based_on_output_path=based_on_output_path,
+            based_on_manifest_path=based_on_manifest_path,
+            source_round=source_round,
+            target_round=target_round,
+            status=status,
+            progress_path=progress_path,
+            last_error=last_error,
+            last_error_chunk_id=last_error_chunk_id,
+            completed_chunk_count=completed_chunk_count,
+            total_chunk_count=total_chunk_count,
+            stop_reason=stop_reason,
+        )
+    return update_round(
+        doc_id=doc_id,
+        round_number=round_number,
+        prompt=prompt,
+        prompt_profile=prompt_profile,
+        input_path=input_path,
+        output_path=output_path,
+        chunk_limit=chunk_limit,
+        input_segment_count=input_segment_count,
+        output_segment_count=output_segment_count,
+        manifest_path=manifest_path,
+        is_partial=is_partial,
+        target_paragraph_indexes=list(target_paragraph_indexes or []),
+        based_on_output_path=based_on_output_path,
+        based_on_manifest_path=based_on_manifest_path,
+        source_round=source_round,
+        target_round=target_round,
+        status=status,
+        progress_path=progress_path,
+        last_error=last_error,
+        last_error_chunk_id=last_error_chunk_id,
+        completed_chunk_count=completed_chunk_count,
+        total_chunk_count=total_chunk_count,
+        stop_reason=stop_reason,
+    )
 
 
 def _read_progress_summary(manifest_path: str) -> dict[str, Any]:
@@ -102,20 +247,34 @@ def _read_progress_summary(manifest_path: str) -> dict[str, Any]:
 def _map_history_round(item: dict[str, Any]) -> dict[str, Any]:
     manifest_path = str(item.get("manifest_path", ""))
     progress = _read_progress_summary(manifest_path)
+    progress_path = str(item.get("progress_path", "") or progress["progressPath"])
+    completed_chunk_count = int(item.get("completed_chunk_count", progress["completedChunkCount"]) or 0)
+    total_chunk_count = int(item.get("total_chunk_count", progress["totalChunkCount"]) or 0)
+    last_error = str(item.get("last_error", "") or progress["lastError"])
+    last_error_chunk_id = str(item.get("last_error_chunk_id", "") or progress["lastErrorChunkId"])
+    stop_reason = str(item.get("stop_reason", "") or progress["stopReason"])
+    status = _derive_history_status(
+        str(item.get("status", "completed") or "completed"),
+        str(progress["progressStatus"]),
+        completed_chunk_count=completed_chunk_count,
+        total_chunk_count=total_chunk_count,
+    )
     return {
         "round": int(item.get("round", 0)),
         "prompt": str(item.get("prompt", "")),
         "inputPath": str(item.get("input_path", "")),
         "outputPath": str(item.get("output_path", "")),
         "manifestPath": manifest_path,
-        "progressPath": progress["progressPath"],
+        "progressPath": progress_path,
         "progressStatus": progress["progressStatus"],
-        "completedChunkCount": progress["completedChunkCount"],
-        "totalChunkCount": progress["totalChunkCount"],
-        "lastError": progress["lastError"],
-        "lastErrorChunkId": progress["lastErrorChunkId"],
+        "status": status,
+        "canResume": _can_resume(status, progress_path, completed_chunk_count, total_chunk_count),
+        "completedChunkCount": completed_chunk_count,
+        "totalChunkCount": total_chunk_count,
+        "lastError": last_error,
+        "lastErrorChunkId": last_error_chunk_id,
         "stopRequested": progress["stopRequested"],
-        "stopReason": progress["stopReason"],
+        "stopReason": stop_reason,
         "scoreTotal": item.get("score_total"),
         "chunkLimit": item.get("chunk_limit"),
         "inputSegmentCount": item.get("input_segment_count"),
@@ -136,20 +295,34 @@ def _map_history_round(item: dict[str, Any]) -> dict[str, Any]:
 def _map_history_revision(item: dict[str, Any]) -> dict[str, Any]:
     manifest_path = str(item.get("manifest_path", ""))
     progress = _read_progress_summary(manifest_path)
+    progress_path = str(item.get("progress_path", "") or progress["progressPath"])
+    completed_chunk_count = int(item.get("completed_chunk_count", progress["completedChunkCount"]) or 0)
+    total_chunk_count = int(item.get("total_chunk_count", progress["totalChunkCount"]) or 0)
+    last_error = str(item.get("last_error", "") or progress["lastError"])
+    last_error_chunk_id = str(item.get("last_error_chunk_id", "") or progress["lastErrorChunkId"])
+    stop_reason = str(item.get("stop_reason", "") or progress["stopReason"])
+    status = _derive_history_status(
+        str(item.get("status", "completed") or "completed"),
+        str(progress["progressStatus"]),
+        completed_chunk_count=completed_chunk_count,
+        total_chunk_count=total_chunk_count,
+    )
     return {
         "revisionNumber": int(item.get("revision_number", 0)),
         "prompt": str(item.get("prompt", "")),
         "inputPath": str(item.get("input_path", "")),
         "outputPath": str(item.get("output_path", "")),
         "manifestPath": manifest_path,
-        "progressPath": progress["progressPath"],
+        "progressPath": progress_path,
         "progressStatus": progress["progressStatus"],
-        "completedChunkCount": progress["completedChunkCount"],
-        "totalChunkCount": progress["totalChunkCount"],
-        "lastError": progress["lastError"],
-        "lastErrorChunkId": progress["lastErrorChunkId"],
+        "status": status,
+        "canResume": _can_resume(status, progress_path, completed_chunk_count, total_chunk_count),
+        "completedChunkCount": completed_chunk_count,
+        "totalChunkCount": total_chunk_count,
+        "lastError": last_error,
+        "lastErrorChunkId": last_error_chunk_id,
         "stopRequested": progress["stopRequested"],
-        "stopReason": progress["stopReason"],
+        "stopReason": stop_reason,
         "scoreTotal": item.get("score_total"),
         "chunkLimit": item.get("chunk_limit"),
         "inputSegmentCount": item.get("input_segment_count"),
@@ -169,7 +342,7 @@ def _record_entry_to_history(doc_id: str, entry: dict[str, Any]) -> dict[str, An
     rounds = entry.get("rounds") if isinstance(entry.get("rounds"), list) else []
     history_rounds = [_map_history_round(item) for item in rounds if isinstance(item, dict)]
     history_rounds.sort(key=lambda item: item["round"], reverse=True)
-    completed_rounds = sorted(item["round"] for item in history_rounds)
+    completed_rounds = sorted(item["round"] for item in history_rounds if item.get("status") == "completed")
     latest_round = history_rounds[0] if history_rounds else None
     latest_version_output = latest_round.get("outputPath", "") if latest_round else ""
     latest_timestamp = latest_round.get("timestamp", "") if latest_round else ""
@@ -286,6 +459,7 @@ def get_document_status(source_path: str, prompt_profile: str = "cn") -> dict[st
         if isinstance(item, dict)
         and isinstance(item.get("round"), int)
         and str(item.get("prompt_profile", "cn") or "cn").strip().lower() == normalized_prompt_profile
+        and normalize_record_status(item.get("status")) == "completed"
     ]
     completed_rounds.sort()
     latest_output_path = ""
@@ -307,6 +481,8 @@ def get_document_status(source_path: str, prompt_profile: str = "cn") -> dict[st
     revision_number: int | None = None
     based_on_output_path = ""
     based_on_manifest_path = ""
+    status_value = "completed" if round_state.is_complete else "in_progress"
+    can_resume = False
 
     if round_state.next_round is not None:
         context = build_round_context(
@@ -335,6 +511,15 @@ def get_document_status(source_path: str, prompt_profile: str = "cn") -> dict[st
         based_on_manifest_path = str(progress["basedOnManifestPath"])
         if based_on_output_path:
             current_input_path = based_on_output_path
+        status_value = _derive_history_status(
+            "in_progress",
+            progress_status,
+            completed_chunk_count=completed_chunk_count,
+            total_chunk_count=total_chunk_count,
+        )
+        can_resume = _can_resume(status_value, progress_path, completed_chunk_count, total_chunk_count)
+    elif round_state.is_complete:
+        status_value = "completed"
 
     if rounds:
         latest_round = max(
@@ -366,6 +551,8 @@ def get_document_status(source_path: str, prompt_profile: str = "cn") -> dict[st
         "manifestPath": manifest_path,
         "progressPath": progress_path,
         "progressStatus": progress_status,
+        "status": status_value,
+        "canResume": can_resume,
         "completedChunkCount": completed_chunk_count,
         "totalChunkCount": total_chunk_count,
         "lastError": last_error,
@@ -444,8 +631,6 @@ def run_round_for_app(
     progress_callback: ProgressCallback | None = None,
     execution_options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    from skill_round_helper import run_skill_round
-
     normalized_config = normalize_model_config(model_config)
     base_url = str(normalized_config["baseUrl"])
     api_key = str(normalized_config["apiKey"])
@@ -480,16 +665,87 @@ def run_round_for_app(
         raise ValueError(f"Document already completed all {MAX_ROUNDS} rounds.")
 
     active_progress_callback = progress_callback or emit_progress_event
-    result = run_skill_round(
+    context = build_execution_context(
         source_path,
-        transform=transform,
         round_number=round_number,
         prompt_profile=prompt_profile,
-        progress_callback=active_progress_callback,
         execution_options=execution_options,
     )
+
+    relative_input_path = relative_to_workspace_path(str(context.input_text_path))
+    relative_output_path = relative_to_workspace_path(str(context.output_text_path))
+    relative_manifest_path = relative_to_workspace_path(str(context.manifest_path))
+    relative_progress_path = relative_to_workspace_path(str(build_progress_path(context.manifest_path)))
+    relative_based_on_output_path = relative_to_workspace_path(context.based_on_output_path or "")
+    relative_based_on_manifest_path = relative_to_workspace_path(context.based_on_manifest_path or "")
+
+    _upsert_history_record(
+        doc_id=context.doc_id,
+        prompt_profile=context.prompt_profile,
+        round_number=context.round_number,
+        prompt=context.prompt_path,
+        input_path=relative_input_path,
+        output_path=relative_output_path,
+        manifest_path=relative_manifest_path,
+        progress_path=relative_progress_path,
+        status="in_progress",
+        is_partial=bool(context.is_partial),
+        target_paragraph_indexes=list(context.target_paragraph_indexes or []),
+        based_on_output_path=relative_based_on_output_path or None,
+        based_on_manifest_path=relative_based_on_manifest_path or None,
+        source_round=context.source_round,
+        target_round=context.target_round,
+        revision_number=context.revision_number,
+    )
+
+    try:
+        result = run_round(
+            doc_id=context.doc_id,
+            round_number=context.round_number,
+            input_path=context.input_text_path,
+            output_path=context.output_text_path,
+            manifest_path=context.manifest_path,
+            transform=transform,
+            prompt_profile=context.prompt_profile,
+            progress_callback=active_progress_callback,
+            apply_mode=context.apply_mode,
+            source_round=context.source_round,
+            target_round=context.target_round,
+            revision_number=context.revision_number,
+            target_paragraph_indexes=context.target_paragraph_indexes,
+            based_on_output_path=context.based_on_output_path,
+            based_on_manifest_path=context.based_on_manifest_path,
+        )
+    except (RoundPausedError, RoundStoppedError):
+        progress = _read_progress_summary(str(context.manifest_path))
+        _upsert_history_record(
+            doc_id=context.doc_id,
+            prompt_profile=context.prompt_profile,
+            round_number=context.round_number,
+            prompt=context.prompt_path,
+            input_path=relative_input_path,
+            output_path=relative_output_path,
+            manifest_path=relative_manifest_path,
+            progress_path=relative_progress_path,
+            status="interrupted",
+            is_partial=bool(context.is_partial),
+            target_paragraph_indexes=list(context.target_paragraph_indexes or []),
+            based_on_output_path=relative_based_on_output_path or None,
+            based_on_manifest_path=relative_based_on_manifest_path or None,
+            source_round=context.source_round,
+            target_round=context.target_round,
+            revision_number=context.revision_number,
+            last_error=str(progress["lastError"]),
+            last_error_chunk_id=str(progress["lastErrorChunkId"]),
+            completed_chunk_count=int(progress["completedChunkCount"]),
+            total_chunk_count=int(progress["totalChunkCount"]),
+            stop_reason=str(progress["stopReason"]),
+        )
+        raise
+
+    result["skill_context"] = context.to_dict()
     if result["skill_context"].get("is_revision"):
-        doc_entry = update_revision(
+        doc_entry = _upsert_history_record(
             doc_id=result["skill_context"]["doc_id"],
             round_number=int(result["round"]),
             revision_number=int(result["skill_context"]["revision_number"]),
@@ -501,14 +757,39 @@ def run_round_for_app(
             input_segment_count=int(result["input_segment_count"]),
             output_segment_count=int(result["output_segment_count"]),
             manifest_path=relative_to_workspace_path(result["manifest_path"]),
+            progress_path=relative_to_workspace_path(result["progress_path"]),
             target_paragraph_indexes=list(result.get("target_paragraph_indexes", []) or []),
             based_on_output_path=relative_to_workspace_path(result.get("based_on_output_path", "")),
             based_on_manifest_path=relative_to_workspace_path(result.get("based_on_manifest_path", "")),
             source_round=result.get("source_round"),
             target_round=result.get("target_round"),
+            status="completed",
+            completed_chunk_count=int(result["completed_chunk_count"]),
+            total_chunk_count=int(result["input_segment_count"]),
         )
     else:
-        doc_entry = result["doc_entry"]
+        doc_entry = _upsert_history_record(
+            doc_id=result["skill_context"]["doc_id"],
+            round_number=int(result["round"]),
+            prompt=result["skill_context"]["prompt_path"],
+            prompt_profile=prompt_profile,
+            input_path=relative_to_workspace_path(result["skill_context"]["input_text_path"]),
+            output_path=relative_to_workspace_path(result["output_path"]),
+            chunk_limit=int(result["chunk_limit"]),
+            input_segment_count=int(result["input_segment_count"]),
+            output_segment_count=int(result["output_segment_count"]),
+            manifest_path=relative_to_workspace_path(result["manifest_path"]),
+            progress_path=relative_to_workspace_path(result["progress_path"]),
+            is_partial=bool(result.get("is_partial")),
+            target_paragraph_indexes=list(result.get("target_paragraph_indexes", []) or []),
+            based_on_output_path=relative_to_workspace_path(result.get("based_on_output_path", "")),
+            based_on_manifest_path=relative_to_workspace_path(result.get("based_on_manifest_path", "")),
+            source_round=result.get("source_round"),
+            target_round=result.get("target_round"),
+            status="completed",
+            completed_chunk_count=int(result["completed_chunk_count"]),
+            total_chunk_count=int(result["input_segment_count"]),
+        )
 
     return {
         "round": int(result["round"]),

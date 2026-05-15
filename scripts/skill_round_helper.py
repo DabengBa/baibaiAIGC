@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from aigc_records import ROOT_DIR, get_round_record, load_records
+from aigc_records import ROOT_DIR, get_round_record, load_records, normalize_record_status
 from aigc_round_service import (
     build_progress_path,
     get_max_rounds,
@@ -88,6 +88,7 @@ def get_document_round_state(doc_id: str, prompt_profile: str = "cn") -> Documen
         if isinstance(round_item, dict)
         and isinstance(round_item.get("round"), int)
         and str(round_item.get("prompt_profile", "cn") or "cn").strip().lower() == normalized_prompt_profile
+        and normalize_record_status(round_item.get("status")) == "completed"
         and 1 <= int(round_item.get("round")) <= max_rounds
     )
     for expected in range(1, max_rounds + 1):

@@ -16,7 +16,7 @@ function renderResumeStatus(status: DocumentStatus): string {
   if (!status.hasNextRound || status.isComplete) {
     return "当前文档已完成全部轮次。";
   }
-  if (status.totalChunkCount > 0 && status.completedChunkCount > 0) {
+  if (status.canResume && status.totalChunkCount > 0) {
     return `检测到断点进度：已完成 ${status.completedChunkCount}/${status.totalChunkCount} 块，可继续执行。`;
   }
   return "当前轮还没有已保存的分块进度。";
@@ -99,7 +99,7 @@ export function DocumentCard({
           ) : null}
           <div className="button-row">
             <button className="primary-button" onClick={onRunRound} disabled={!canRunNextRound}>
-              {value.progressStatus === "paused" || value.progressStatus === "stopped"
+              {value.canResume
                 ? "继续执行当前轮"
                 : value.hasNextRound
                   ? "执行下一轮"

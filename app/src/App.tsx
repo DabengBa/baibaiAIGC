@@ -341,7 +341,7 @@ export function App({ service, pickerLabel }: Props) {
           ? `已载入文档，当前可执行第 ${status.nextRound} 轮`
           : "已载入文档，全部轮次已完成",
       );
-      const resumeNotice = status.totalChunkCount && status.completedChunkCount
+      const resumeNotice = status.canResume && status.totalChunkCount && status.completedChunkCount
         ? `检测到第 ${status.nextRound} 轮已有 ${status.completedChunkCount}/${status.totalChunkCount} 块进度，可直接续跑。`
         : "";
       const partialNotice = status.targetParagraphIndexes.length
@@ -396,6 +396,7 @@ export function App({ service, pickerLabel }: Props) {
       setProgress(null);
       progressUnlistenRef.current?.();
       const runToken = await service.startRunRound(documentStatus.sourcePath, modelConfig, executionOptions);
+      await refreshHistoryList();
       progressUnlistenRef.current = await service.listenRoundProgress((nextProgress) => {
         setProgress(nextProgress);
         setRuntimeStep(formatRuntimeStep(nextProgress, "处理中"));
@@ -457,24 +458,25 @@ export function App({ service, pickerLabel }: Props) {
       progressUnlistenRef.current?.();
       progressUnlistenRef.current = null;
       const latestStatus = await refreshDocumentState(documentStatus.sourcePath).catch(() => null);
-      const pausedMessage = latestStatus?.progressStatus === "paused"
-        ? latestStatus.lastError || "网络异常或模型请求失败，当前轮已暂停，请手动点击继续。"
+      await refreshHistoryList().catch(() => null);
+      const interruptedMessage = latestStatus?.status === "interrupted"
+        ? latestStatus.lastError || latestStatus.stopReason || "网络异常或模型请求失败，当前轮已中断，可继续续跑。"
         : "";
       const stoppedMessage = latestStatus?.progressStatus === "stopped"
         ? latestStatus.stopReason || "已按你的请求停止，当前进度已保留。"
         : "";
       setProgress(null);
-      setError(pausedMessage ? pausedMessage : stoppedMessage ? "" : String(appError));
+      setError(interruptedMessage && !stoppedMessage ? interruptedMessage : stoppedMessage ? "" : String(appError));
       setNotice(
-        pausedMessage
-          ? `已暂停在第 ${latestStatus?.targetRound ?? latestStatus?.nextRound ?? documentStatus.nextRound} 轮，保留已完成进度，可随时继续。`
+        interruptedMessage
+          ? `已中断在第 ${latestStatus?.targetRound ?? latestStatus?.nextRound ?? documentStatus.nextRound} 轮，保留已完成进度，可随时继续。`
           : stoppedMessage
             ? `已停止在第 ${latestStatus?.targetRound ?? latestStatus?.nextRound ?? documentStatus.nextRound} 轮，保留已完成进度，可随时继续。`
             : "",
       );
       setRuntimeStep(
-        pausedMessage
-          ? "执行已暂停，等待手动继续"
+        interruptedMessage
+          ? "执行已中断，等待手动继续"
           : stoppedMessage
             ? "执行已停止，等待手动继续"
             : "执行轮次失败",
